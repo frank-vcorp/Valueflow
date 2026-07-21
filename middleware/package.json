@@ -1,0 +1,42 @@
+{
+  "name": "repaga-siemens-middleware",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Middleware Aspel SAE 10 a Siemens PoSi",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=20 <21"
+  },
+  "scripts": {
+    "build": "tsc && node scripts/copy-views.cjs",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run --coverage",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "bcryptjs": "^3.0.2",
+    "dotenv": "^16.3.0",
+    "express": "^4.18.0",
+    "node-addon-api": "^8.5.0",
+    "node-cron": "^3.0.0",
+    "node-firebird-driver": "^3.6.0",
+    "node-firebird-driver-native": "^3.6.0",
+    "node-firebird-native-api": "^3.2.0",
+    "winston": "^3.17.0",
+    "winston-daily-rotate-file": "^5.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.0",
+    "@vitest/coverage-v8": "^3.2.0",
+    "eslint": "^9.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.2.0"
+  }
+}

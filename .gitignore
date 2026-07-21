@@ -1,0 +1,102 @@
+# ===== Node.js / Middleware =====
+middleware/node_modules/
+middleware/dist/
+middleware/coverage/
+middleware/.env
+middleware/.env.local
+middleware/config.json
+middleware/logs/
+middleware/.nyc_output/
+
+# ===== Bases de datos y archivos grandes =====
+*.FDB
+*.fdb
+*.GDB
+*.gdb
+*.DB
+*.db
+*.SQLite
+*.sqlite
+*.bak
+*.backup
+
+# ===== Archivos sensibles =====
+# Credenciales y secretos
+**/POS QUA/
+**/pos_qua/
+**/credenciales/
+**/credentials/
+**/.env
+**/.env.*
+!**/.env.example
+**/secrets.json
+**/api-keys.txt
+
+# ===== Logs =====
+*.log
+*.log.*
+*.gz
+logs/
+tmp/
+
+# ===== IDEs y editores =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===== Archivos del sistema Windows =====
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ===== Archivos Excel legacy =====
+*.xls
+*.xlsb
+# (excepto algunos .xlsx)
+*.xlsx
+!middleware/.xlsxkeep
+!analysis/sample.xlsx
+
+# ===== Screenshots temporales =====
+/tmp/TOUR-*.png
+/01-*.png
+/02-*.png
+/03-*.png
+/04-*.png
+/05-*.png
+/06-*.png
+/07-*.png
+/08-*.png
+/09-*.png
+TOUR-*.png
+
+# ===== Builds y temporales =====
+build/
+out/
+*.tmp
+*.temp
+.cache/
+
+# ===== Coverage y reportes =====
+coverage/
+.nyc_output/
+*.lcov
+
+# ===== Configuraciones locales =====
+.env.local
+.env.*.local
+config.local.json
+
+# ===== Dependencias Python (si las hay) =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# ===== Playwright =====
+.playwright-mcp/

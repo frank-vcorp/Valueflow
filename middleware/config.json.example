@@ -1,0 +1,45 @@
+{
+  "siemens": {
+    "base_url": "https://api.pos.siemens.com",
+    "api_key": "",
+    "environment": "QUA",
+    "distributor_sender_id": "MX-REPRESENTACIONES"
+  },
+  "firebird": {
+    "db_path": "C:/Program Files/Aspel/Aspel SAE 10.0/BD/SAE10.FDB",
+    "user": "readonly_siemens_user",
+    "password_source": "env:FIREBIRD_PASSWORD"
+  },
+  "schedules": {
+    "inventory": { "enabled": true, "cron": "0 2 * * *", "timezone": "America/Mexico_City" },
+    "sales": { "enabled": true, "cron": "0 3 * * *", "timezone": "America/Mexico_City" }
+  },
+  "batch_size": 3000,
+  "retry_policy": {
+    "max_retries": 5,
+    "initial_delay_ms": 2000,
+    "backoff_multiplier": 2,
+    "max_delay_ms": 60000
+  },
+  "siemens_line_filter": {
+    "enabled": true,
+    "lines": ["BAJA", "SINU", "SIMAT", "LP", "DRIVE", "MOTOR", "SINUM", "SERVI", "OBSO", "SENSO", "SERVO", "INSTR", "UPS", "SIMA", "ESPE"],
+    "include_inactive_products": true
+  },
+  "optional_fields": {
+    "inventory": {
+      "distributor_order_taking_branch_name": false,
+      "distributor_order_taking_branch_id": true,
+      "vendor_item_options": false,
+      "upc_ean": false,
+      "stock_item": false,
+      "abc_segmentation": false
+    },
+    "sales": {
+      "product_description": false,
+      "customer_name": false,
+      "discount_amount": false,
+      "tax_amount": false
+    }
+  }
+}
