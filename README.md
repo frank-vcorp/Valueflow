@@ -109,6 +109,12 @@ Automatiza dos flujos diarios de información hacia Siemens:
 │   ├── config.json.example
 │   ├── README.md                            ← Manual de instalación
 │   └── MANUAL_OPERACION.md                  ← Manual del usuario
+├── installer/                               ← Instalador para Windows
+│   ├── install.ps1                          ← Script PowerShell principal
+│   ├── install.bat                          ← Wrapper con elevación admin
+│   ├── installer.iss                        ← Script Inno Setup → .exe
+│   ├── build-installer.sh                   ← Compilador Linux (vía Wine)
+│   └── README.md                            ← 3 opciones de instalación
 ├── assets/                                  ← Imágenes corporativas
 │   ├── logo_aga_letras_2.png
 │   └── partner.png
@@ -119,6 +125,26 @@ Automatiza dos flujos diarios de información hacia Siemens:
 ---
 
 ## 🚀 Instalación rápida
+
+Hay **3 formas** de instalar. Elige la que prefieras:
+
+### Opción A — Instalador profesional .exe (RECOMENDADO)
+
+Si Frank compiló el instalador (ver [installer/README.md](installer/README.md)):
+
+1. **Doble click** en `Valueflow-Setup-1.0.exe`
+2. **Next → Next → Install**
+3. Ingresa password de Firebird y de UI
+4. **Finish** → Se abre la UI automáticamente
+
+### Opción B — Scripts PowerShell (sin compilar)
+
+1. Copia la carpeta `installer/` + carpeta `middleware/` a la PC destino
+2. **Doble click** en `installer/install.bat`
+3. Acepta la elevación de UAC
+4. Sigue las instrucciones en pantalla
+
+### Opción C — Instalación manual (sysadmins)
 
 ### Requisitos
 - **Windows 10/11** o Windows Server 2019+
