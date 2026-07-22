@@ -20,7 +20,7 @@ AppVerName={#MyAppName} v{#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
-UpdatesURL={#MyAppURL}
+AppUpdateURL={#MyAppURL}
 
 ; Directorio de instalación por defecto
 DefaultDirName={autopf}\Valueflow
