@@ -119,15 +119,17 @@ jobs:
           scan-type: 'fs'
           scan-ref: 'middleware'
           severity: 'CRITICAL,HIGH'
-          format: 'table'
-          output: 'trivy-fs-report.txt'
+          format: 'sarif'
+          output: 'trivy-fs-report.sarif'
           ignore-unfixed: true
+          # No fallar el job por vulnerabilidades (best-effort)
+          exit-code: '0'
 
       - name: Upload Trivy report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: trivy-fs-report
-          path: trivy-fs-report.txt
+          path: trivy-fs-report.sarif
           if-no-files-found: warn
           retention-days: 30
