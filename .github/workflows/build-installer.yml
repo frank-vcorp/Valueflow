@@ -65,33 +65,34 @@ jobs:
           docker --version
           echo ""
 
-          # Verificar estructura antes de compilar
-          echo "=== Files in installer/ ==="
-          ls -la installer/
-          echo ""
-
           # Crear directorio de salida
           mkdir -p installer/build_output
 
-          # Ejecutar ISCC desde el directorio /work/installer (que es el dir installer del repo)
-          # OutputDir=build_output es relativo a este working dir, así que el output va a installer/build_output
+          # Crear el .iss con OutputDir absoluto (workaround para ISCC en Docker)
+          # ISCC no maneja bien paths relativos en Docker, usamos absoluto
+          ISS_FILE="/tmp/installer.iss"
+          sed 's|OutputDir=build_output|OutputDir=/work/installer/build_output|' installer/installer.iss > "$ISS_FILE"
+
+          # Verificar el .iss procesado
+          echo "=== installer.iss con OutputDir absoluto ==="
+          grep "OutputDir" "$ISS_FILE"
+          echo ""
+
+          # Ejecutar ISCC con el .iss procesado y working dir en la raíz
           docker run --rm \
             -v "$(pwd):/work" \
-            -w /work/installer \
+            -v "$ISS_FILE:/tmp/installer.iss:ro" \
+            -w /tmp \
             amake/innosetup:latest \
-            /opt/innosetup/ISCC.exe installer.iss 2>&1
-
-          # Listar archivos generados
-          echo ""
-          echo "=== After compile: installer/build_output/ ==="
-          ls -la installer/build_output/ 2>&1 || echo "No build_output directory"
-          echo ""
-          echo "=== All installer/ ==="
-          ls -la installer/
+            /opt/innosetup/ISCC.exe /tmp/installer.iss 2>&1
 
           # Verificar que se generó el .exe
           if [ ! -f "installer/build_output/Valueflow-Setup-v1.0.exe" ]; then
             echo "::error::Installer not generated"
+            echo "Looking in installer/build_output/:"
+            ls -la installer/build_output/ 2>&1 || echo "No directory"
+            echo "Looking in /tmp/:"
+            ls -la /tmp/*.exe 2>&1 || echo "No .exe in /tmp"
             exit 1
           fi
 
