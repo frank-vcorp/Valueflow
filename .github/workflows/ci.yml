@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-middleware:
+    name: Validate Middleware (Node.js)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20 with npm cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: middleware/package-lock.json
+
+      - name: Install dependencies (npm ci)
+        working-directory: middleware
+        run: npm ci
+
+      - name: Typecheck (tsc --noEmit)
+        working-directory: middleware
+        run: npx tsc --noEmit
+
+      - name: Lint (eslint, no fail on warnings)
+        working-directory: middleware
+        continue-on-error: true
+        run: npx eslint .
+
+      - name: Build TypeScript
+        working-directory: middleware
+        run: npm run build
+
+      - name: Run tests (Vitest)
+        working-directory: middleware
+        run: npm test
+
+  validate-installer:
+    name: Validate Installer Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PowerShell (pwsh) for install.ps1 syntax check
+        run: |
+          if ! command -v pwsh >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y wget apt-transport-https software-properties-common
+            wget -q https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb
+            sudo dpkg -i packages-microsoft-prod.deb
+            sudo apt-get update
+            sudo apt-get install -y powershell
+          fi
+          pwsh --version
+
+      - name: Validate install.ps1 syntax
+        run: |
+          pwsh -NoProfile -Command '
+            $tokens = $null
+            $errors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseInput(
+              (Get-Content -Raw installer/install.ps1),
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors.Count -gt 0) {
+              Write-Host "PowerShell parse errors:"
+              $errors | ForEach-Object { Write-Host $_ }
+              exit 1
+            }
+            Write-Host "install.ps1 syntax OK"
+          '
+
+      - name: Validate build-installer.sh syntax (bash -n)
+        run: bash -n installer/build-installer.sh
+
+      - name: Verify installer.iss source paths exist
+        working-directory: installer
+        run: |
+          set -e
+          # Files referenced by installer.iss [Files] section must exist
+          test -f ../middleware/package.json
+          test -f ../middleware/tsconfig.json
+          test -f ../assets/logo_aga_letras_2.png
+          test -f ../assets/partner.png
+          test -f install.ps1
+          test -f install.bat
+          test -f installer.iss
+          echo "All installer.iss source paths exist"
+
+  security-scan:
+    name: Security Scan (Trivy, best-effort)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scan (CRITICAL, HIGH)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: 'middleware'
+          severity: 'CRITICAL,HIGH'
+          format: 'table'
+          output: 'trivy-fs-report.txt'
+          ignore-unfixed: true
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-fs-report
+          path: trivy-fs-report.txt
+          if-no-files-found: warn
+          retention-days: 30

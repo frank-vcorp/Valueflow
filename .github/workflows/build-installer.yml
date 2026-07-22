@@ -1,0 +1,153 @@
+name: Build Installer (Windows .exe)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'installer/**'
+      - 'middleware/**'
+      - 'assets/**'
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Create a GitHub Release with the .exe attached'
+        required: false
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      release:
+        description: 'Create a GitHub Release with the .exe attached'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  INNO_SETUP_VERSION: '6.4.2'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-installer-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-installer:
+    name: Build Valueflow-Setup .exe with Wine + Inno Setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Wine 32-bit, Xvfb, cabextract
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y wine64 wine32 xvfb cabextract
+          wine --version
+
+      - name: Download Inno Setup portable installer
+        run: |
+          mkdir -p /tmp/innosetup
+          cd /tmp/innosetup
+          wget -q "https://jrsoftware.org/download.php/is.exe" -O innosetup.exe
+          ls -la innosetup.exe
+
+      - name: Install Inno Setup silently (Wine 32-bit, Xvfb)
+        run: |
+          export WINEPREFIX=/tmp/.wine-installer
+          export WINEARCH=win32
+          export WINEDEBUG=-all
+          Xvfb :99 -screen 0 1024x768x16 &
+          XVFB_PID=$!
+          export DISPLAY=:99
+          sleep 2
+          cd /tmp/innosetup
+          wine innosetup.exe /VERYSILENT /SUPPRESSMSGBOXES /CURRENTUSER /DIR="C:\\InnoSetup"
+          kill $XVFB_PID 2>/dev/null || true
+          sleep 1
+          ISCC=$(find /tmp/.wine-installer/drive_c/ -name "ISCC.exe" 2>/dev/null | head -1)
+          if [ -z "$ISCC" ]; then
+            echo "::error::ISCC.exe not found after Inno Setup install"
+            exit 1
+          fi
+          echo "ISCC_PATH=$ISCC" >> "$GITHUB_ENV"
+          wine "$ISCC" /? | head -3
+
+      - name: Verify repository structure
+        run: |
+          [ -d "middleware" ] || { echo "::error::middleware/ missing"; exit 1; }
+          [ -d "assets" ] || { echo "::error::assets/ missing"; exit 1; }
+          [ -f "installer/installer.iss" ] || { echo "::error::installer/installer.iss missing"; exit 1; }
+          [ -f "installer/install.ps1" ] || { echo "::error::installer/install.ps1 missing"; exit 1; }
+          [ -f "installer/install.bat" ] || { echo "::error::installer/install.bat missing"; exit 1; }
+          echo "Repository structure OK"
+
+      - name: Pre-build middleware (npm ci + tsc)
+        working-directory: middleware
+        run: |
+          npm ci
+          npm run build
+
+      - name: Compile installer with ISCC
+        working-directory: installer
+        run: |
+          export WINEPREFIX=/tmp/.wine-installer
+          export WINEARCH=win32
+          export WINEDEBUG=-all
+          Xvfb :99 -screen 0 1024x768x16 &
+          XVFB_PID=$!
+          export DISPLAY=:99
+          sleep 2
+          wine "$ISCC_PATH" installer.iss 2>&1 | tail -30
+          BUILD_EXIT=${PIPESTATUS[0]}
+          kill $XVFB_PID 2>/dev/null || true
+          if [ "$BUILD_EXIT" -ne 0 ]; then
+            echo "::error::ISCC build failed with exit $BUILD_EXIT"
+            exit 1
+          fi
+          mkdir -p output
+          ls -la output/
+
+      - name: Verify generated .exe (PE header)
+        run: |
+          EXE_FILE="installer/output/Valueflow-Setup-v1.0.exe"
+          [ -f "$EXE_FILE" ] || { echo "::error::$EXE_FILE not found"; ls -la installer/output/; exit 1; }
+          # PE header check: bytes 4d5a == "MZ"
+          head -c 2 "$EXE_FILE" | xxd -p | grep -q "4d5a" || { echo "::error::Missing PE/MZ header"; exit 1; }
+          FILE_SIZE=$(stat -c%s "$EXE_FILE")
+          echo "Generated $EXE_FILE ($FILE_SIZE bytes)"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Valueflow-Setup-v1.0-windows
+          path: installer/output/Valueflow-Setup-v1.0.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub Release (manual trigger only)
+        if: github.event_name == 'workflow_dispatch' && inputs.release == true
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/output/Valueflow-Setup-v1.0.exe
+          generate_release_notes: true
+          body: |
+            ## Valueflow Middleware — Windows Installer
+
+            This release contains the **Valueflow-Setup-v1.0.exe** installer compiled with Inno Setup 6.4.2 via Wine.
+
+            ### Installation
+            1. Download `Valueflow-Setup-v1.0.exe` below.
+            2. Right-click → *Run as administrator*.
+            3. Follow the wizard (it will auto-install Node.js 20 LTS if missing).
+            4. The installer configures the middleware as a Windows Service via PM2.
+
+            ### Requirements
+            - Windows 10 / 11 (x64)
+            - Access to Aspel SAE 10 Firebird database
+            - Credentials for Siemens PoSi portal
+
+            See [README.md](../../blob/main/README.md) and [installer/README.md](../../blob/main/installer/README.md) for details.
