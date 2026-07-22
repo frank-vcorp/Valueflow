@@ -8,7 +8,7 @@
     "node": ">=20 <21"
   },
   "scripts": {
-    "build": "tsc && node scripts/copy-views.cjs",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-views.cjs",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest run --coverage",
