@@ -106,7 +106,7 @@ Integrar Aspel SAE 10 con Siemens PoSi para sincronizar ventas (Value Flow) e in
   - Estado: ✅ **Implementada por SOFIA** (2026-07-21 15:52). 41 archivos en `middleware/`. Pendiente instalación en PC Windows del cliente.
   - Contiene: stack técnico, estructura de proyecto, modelo de datos (`.env` + `config.json`), 8 RFs (Firebird, queries, transformador, API cliente, scheduler, UI con logos, logging, errores), DoD, self-review checklist.
 
-- **`SPEC-INFRA-20260721-01-cicd-github-actions.md`** → [`context/SPECs/SPEC-INFRA-20260721-01-cicd-github-actions.md`](../context/SPECs/SPEC-INFRA-20260721-01-cicd-github-actions.md)
+- **`SPEC-INFRA-20260721-01-cicd-github-actions.md`** → [`specs/SPEC-INFRA-20260721-01-cicd-github-actions.md`](../specs/SPEC-INFRA-20260721-01-cicd-github-actions.md)
   - Estado: **Lista para delegación a SOFIA** — CI/CD con GitHub Actions.
   - Contiene: 3 workflows (ci.yml para validación, build-installer.yml para compilar .exe con Wine+Inno Setup, release.yml para releases por tag), security scan con Trivy, documentación de workflows.
 
