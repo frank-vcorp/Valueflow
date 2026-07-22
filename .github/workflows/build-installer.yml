@@ -62,22 +62,24 @@ jobs:
       - name: 🔨 Compilar con Docker (Inno Setup preinstalado)
         run: |
           # Docker con Inno Setup 6.x preinstalado - mucho más confiable que Wine
-          # La imagen maneja ISCC.exe automáticamente
-
           docker --version
           echo ""
 
-          # Montar el repo en /work dentro del container
-          # Usar imágenes oficiales de Inno Setup o alternativas validadas
+          # Crear directorio de salida
+          mkdir -p installer/output
+
+          # Ejecutar ISCC desde el directorio installer/ (así el OutputDir 'output' es relativo correcto)
           docker run --rm \
             -v "$(pwd):/work" \
-            -w /work \
+            -w /work/installer \
             amake/innosetup:latest \
-            /opt/innosetup/ISCC.exe /work/installer/installer.iss 2>&1
+            /opt/innosetup/ISCC.exe installer.iss 2>&1
 
           # Verificar que se generó el .exe
           if [ ! -f "installer/output/Valueflow-Setup-v1.0.exe" ]; then
             echo "::error::Installer not generated"
+            echo "Looking in installer/output/:"
+            ls -la installer/output/ 2>&1 || echo "No directory"
             exit 1
           fi
 
