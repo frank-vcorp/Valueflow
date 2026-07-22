@@ -48,19 +48,27 @@ jobs:
           sudo apt-get install -y wine64 wine32 xvfb cabextract
           wine --version
 
-      - name: Download Inno Setup portable installer
+      - name: Download + Install Inno Setup (Wine 32-bit, Xvfb)
         run: |
-          mkdir -p /tmp/innosetup
-          cd /tmp/innosetup
-          wget -q "https://jrsoftware.org/download.php/is.exe" -O innosetup.exe
-          ls -la innosetup.exe
+          # COMBINED: Download + Install in one step (GitHub Actions steps share
+          # their own isolated filesystem, so downloading in one step and using
+          # in another fails with "File not found")
 
-      - name: Install Inno Setup silently (Wine 32-bit, Xvfb)
-        run: |
           # Ensure HOME exists and is writable
           mkdir -p "$HOME"
           chmod 700 "$HOME" 2>/dev/null || true
 
+          # Download Inno Setup portable
+          mkdir -p /tmp/innosetup
+          cd /tmp/innosetup
+          wget -q "https://jrsoftware.org/download.php/is.exe" -O innosetup.exe
+          if [ ! -f "innosetup.exe" ]; then
+            echo "::error::Failed to download innosetup.exe"
+            exit 1
+          fi
+          echo "✓ Downloaded innosetup.exe ($(stat -c%s innosetup.exe) bytes)"
+
+          # Setup Wine environment
           export WINEPREFIX=$HOME/.wine-installer
           export WINEARCH=win32
           export WINEDEBUG=-all
@@ -69,30 +77,25 @@ jobs:
           export DISPLAY=:99
           sleep 2
 
-          # Use absolute path to innosetup.exe (cd may not persist in single-line runs)
+          # Install Inno Setup via Wine
           INNO_INSTALLER="/tmp/innosetup/innosetup.exe"
-          if [ ! -f "$INNO_INSTALLER" ]; then
-            echo "::error::innosetup.exe not found at $INNO_INSTALLER"
-            exit 1
-          fi
-          echo "Found installer at: $INNO_INSTALLER ($(stat -c%s "$INNO_INSTALLER") bytes)"
-
-          wine "$INNO_INSTALLER" /VERYSILENT /SUPPRESSMSGBOXES /CURRENTUSER /DIR="C:\\InnoSetup"
-          WINE_EXIT=$?
-          echo "Wine exit code: $WINE_EXIT"
+          echo "Running: wine $INNO_INSTALLER /VERYSILENT /SUPPRESSMSGBOXES /CURRENTUSER /DIR=C:\\InnoSetup"
+          wine "$INNO_INSTALLER" /VERYSILENT /SUPPRESSMSGBOXES /CURRENTUSER /DIR="C:\\InnoSetup" || true
+          echo "Wine install completed (exit: $?)"
 
           kill $XVFB_PID 2>/dev/null || true
-          sleep 1
+          sleep 2
 
+          # Verify ISCC.exe was installed
           ISCC=$(find $HOME/.wine-installer/drive_c/ -name "ISCC.exe" 2>/dev/null | head -1)
           if [ -z "$ISCC" ]; then
             echo "::error::ISCC.exe not found after Inno Setup install"
-            echo "::error::WINEPREFIX contents:"
-            find $HOME/.wine-installer/ -name "*.exe" 2>/dev/null | head -10 || true
+            echo "::error::Searching in $HOME/.wine-installer/"
+            find $HOME/.wine-installer/ -name "*.exe" 2>/dev/null | head -10 || echo "No .exe files found"
             exit 1
           fi
           echo "ISCC_PATH=$ISCC" >> "$GITHUB_ENV"
-          echo "✓ Inno Setup instalado en: $ISCC"
+          echo "✓ Inno Setup installed at: $ISCC"
 
       - name: Verify repository structure
         run: |
