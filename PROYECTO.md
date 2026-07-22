@@ -3,7 +3,7 @@
 **Cliente:** REPRESENTACIONES AGA 2 (Repaga)
 **Stack destino:** Aspel SAE 10 + Siemens PoSi API
 **Contacto:** Francisco Aguirre
-**Última actualización:** 2026-07-21 (15:38)
+**Última actualización:** 2026-07-21 (19:05)
 
 ## Objetivo
 Integrar Aspel SAE 10 con Siemens PoSi para sincronizar ventas (Value Flow) e inventario en tiempo real mediante middleware local.
@@ -103,8 +103,12 @@ Integrar Aspel SAE 10 con Siemens PoSi para sincronizar ventas (Value Flow) e in
 
 ## Especificación técnica (SPEC)
 - **`SPEC-IMPL-20260721-01-siemens-middleware.md`** → [`context/SPECs/SPEC-IMPL-20260721-01-siemens-middleware.md`](../context/SPECs/SPEC-IMPL-20260721-01-siemens-middleware.md)
-  - Estado: **Lista para delegación a SOFIA** cuando se apruebe la propuesta y llegue OC del cliente.
+  - Estado: ✅ **Implementada por SOFIA** (2026-07-21 15:52). 41 archivos en `middleware/`. Pendiente instalación en PC Windows del cliente.
   - Contiene: stack técnico, estructura de proyecto, modelo de datos (`.env` + `config.json`), 8 RFs (Firebird, queries, transformador, API cliente, scheduler, UI con logos, logging, errores), DoD, self-review checklist.
+
+- **`SPEC-INFRA-20260721-01-cicd-github-actions.md`** → [`context/SPECs/SPEC-INFRA-20260721-01-cicd-github-actions.md`](../context/SPECs/SPEC-INFRA-20260721-01-cicd-github-actions.md)
+  - Estado: **Lista para delegación a SOFIA** — CI/CD con GitHub Actions.
+  - Contiene: 3 workflows (ci.yml para validación, build-installer.yml para compilar .exe con Wine+Inno Setup, release.yml para releases por tag), security scan con Trivy, documentación de workflows.
 
 ## Autorizaciones autónomas vigentes
 - Sin lote nocturno activo. El usuario trabajará Siemens personalmente en otro chat.
