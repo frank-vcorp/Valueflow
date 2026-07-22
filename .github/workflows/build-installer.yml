@@ -68,17 +68,31 @@ jobs:
           XVFB_PID=$!
           export DISPLAY=:99
           sleep 2
-          cd /tmp/innosetup
-          wine innosetup.exe /VERYSILENT /SUPPRESSMSGBOXES /CURRENTUSER /DIR="C:\\InnoSetup"
+
+          # Use absolute path to innosetup.exe (cd may not persist in single-line runs)
+          INNO_INSTALLER="/tmp/innosetup/innosetup.exe"
+          if [ ! -f "$INNO_INSTALLER" ]; then
+            echo "::error::innosetup.exe not found at $INNO_INSTALLER"
+            exit 1
+          fi
+          echo "Found installer at: $INNO_INSTALLER ($(stat -c%s "$INNO_INSTALLER") bytes)"
+
+          wine "$INNO_INSTALLER" /VERYSILENT /SUPPRESSMSGBOXES /CURRENTUSER /DIR="C:\\InnoSetup"
+          WINE_EXIT=$?
+          echo "Wine exit code: $WINE_EXIT"
+
           kill $XVFB_PID 2>/dev/null || true
           sleep 1
+
           ISCC=$(find $HOME/.wine-installer/drive_c/ -name "ISCC.exe" 2>/dev/null | head -1)
           if [ -z "$ISCC" ]; then
             echo "::error::ISCC.exe not found after Inno Setup install"
+            echo "::error::WINEPREFIX contents:"
+            find $HOME/.wine-installer/ -name "*.exe" 2>/dev/null | head -10 || true
             exit 1
           fi
           echo "ISCC_PATH=$ISCC" >> "$GITHUB_ENV"
-          wine "$ISCC" /? | head -3
+          echo "✓ Inno Setup instalado en: $ISCC"
 
       - name: Verify repository structure
         run: |
