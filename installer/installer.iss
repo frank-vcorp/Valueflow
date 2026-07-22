@@ -44,7 +44,7 @@ VersionInfoCopyright=Copyright (C) 2026 VCorp
 
 ; Salida
 OutputBaseFilename=Valueflow-Setup-v{#MyAppVersion}
-OutputDir=output
+OutputDir=build_output
 ; Icono (opcional, descomentar si tienes un .ico)
 //SetupIconFile=assets\installer.ico
 

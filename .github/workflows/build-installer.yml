@@ -66,9 +66,9 @@ jobs:
           echo ""
 
           # Crear directorio de salida
-          mkdir -p installer/output
+          mkdir -p installer/build_output
 
-          # Ejecutar ISCC desde el directorio installer/ (así el OutputDir 'output' es relativo correcto)
+          # Ejecutar ISCC desde el directorio installer/ (así el OutputDir es relativo correcto)
           docker run --rm \
             -v "$(pwd):/work" \
             -w /work/installer \
@@ -76,10 +76,10 @@ jobs:
             /opt/innosetup/ISCC.exe installer.iss 2>&1
 
           # Verificar que se generó el .exe
-          if [ ! -f "installer/output/Valueflow-Setup-v1.0.exe" ]; then
+          if [ ! -f "installer/build_output/Valueflow-Setup-v1.0.exe" ]; then
             echo "::error::Installer not generated"
-            echo "Looking in installer/output/:"
-            ls -la installer/output/ 2>&1 || echo "No directory"
+            echo "Looking in installer/build_output/:"
+            ls -la installer/build_output/ 2>&1 || echo "No directory"
             exit 1
           fi
 
@@ -88,11 +88,11 @@ jobs:
       # ============================================
       - name: ✓ Verificar instalador generado
         run: |
-          EXE_FILE="installer/output/Valueflow-Setup-v1.0.exe"
+          EXE_FILE="installer/build_output/Valueflow-Setup-v1.0.exe"
 
           if [ ! -f "$EXE_FILE" ]; then
             echo "::error::No se generó el instalador .exe"
-            ls -la installer/output/ 2>/dev/null || echo "No existe directorio output/"
+            ls -la installer/build_output/ 2>/dev/null || echo "No existe directorio build_output/"
             exit 1
           fi
 
@@ -123,7 +123,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Valueflow-Setup-v1.0-windows
-          path: installer/output/Valueflow-Setup-v1.0.exe
+          path: installer/build_output/Valueflow-Setup-v1.0.exe
           if-no-files-found: error
           retention-days: 30
 
@@ -134,7 +134,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.release == true
         uses: softprops/action-gh-release@v2
         with:
-          files: installer/output/Valueflow-Setup-v1.0.exe
+          files: installer/build_output/Valueflow-Setup-v1.0.exe
           generate_release_notes: true
           draft: false
           prerelease: false
@@ -169,7 +169,7 @@ jobs:
           echo "╚════════════════════════════════════════════════════════╝"
           echo ""
           echo "📦 Artifact: Valueflow-Setup-v1.0-windows"
-          echo "📁 Path: installer/output/Valueflow-Setup-v1.0.exe"
+          echo "📁 Path: installer/build_output/Valueflow-Setup-v1.0.exe"
           echo ""
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.release }}" = "true" ]; then
             echo "🚀 GitHub Release creada"
