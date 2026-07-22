@@ -113,13 +113,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install Trivy
+        run: |
+          # Install trivy binary directly (more reliable than the action wrapper)
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+          trivy --version
+
       - name: Run Trivy filesystem scan (CRITICAL, HIGH)
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          scan-type: 'fs'
-          scan-ref: 'middleware'
-          severity: 'CRITICAL,HIGH'
-          format: 'table'
-          ignore-unfixed: true
-          # Best-effort: no fallar el job por vulnerabilidades encontradas
-          exit-code: '0'
+        run: |
+          # Run Trivy scan. Always exit 0 (best-effort job).
+          # The output appears in CI logs for human review.
+          trivy fs \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --no-progress \
+            --quiet \
+            ./middleware/ || echo "(Trivy scan completed with findings or warnings - check logs above)"
