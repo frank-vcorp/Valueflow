@@ -41,7 +41,7 @@ jobs:
       - name: Lint (eslint, no fail on warnings)
         working-directory: middleware
         continue-on-error: true
-        run: npx eslint .
+        run: npm run lint
 
       - name: Build TypeScript
         working-directory: middleware
