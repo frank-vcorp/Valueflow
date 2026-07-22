@@ -57,7 +57,11 @@ jobs:
 
       - name: Install Inno Setup silently (Wine 32-bit, Xvfb)
         run: |
-          export WINEPREFIX=/tmp/.wine-installer
+          # Ensure HOME exists and is writable
+          mkdir -p "$HOME"
+          chmod 700 "$HOME" 2>/dev/null || true
+
+          export WINEPREFIX=$HOME/.wine-installer
           export WINEARCH=win32
           export WINEDEBUG=-all
           Xvfb :99 -screen 0 1024x768x16 &
@@ -68,7 +72,7 @@ jobs:
           wine innosetup.exe /VERYSILENT /SUPPRESSMSGBOXES /CURRENTUSER /DIR="C:\\InnoSetup"
           kill $XVFB_PID 2>/dev/null || true
           sleep 1
-          ISCC=$(find /tmp/.wine-installer/drive_c/ -name "ISCC.exe" 2>/dev/null | head -1)
+          ISCC=$(find $HOME/.wine-installer/drive_c/ -name "ISCC.exe" 2>/dev/null | head -1)
           if [ -z "$ISCC" ]; then
             echo "::error::ISCC.exe not found after Inno Setup install"
             exit 1
@@ -94,7 +98,7 @@ jobs:
       - name: Compile installer with ISCC
         working-directory: installer
         run: |
-          export WINEPREFIX=/tmp/.wine-installer
+          export WINEPREFIX=$HOME/.wine-installer
           export WINEARCH=win32
           export WINEDEBUG=-all
           Xvfb :99 -screen 0 1024x768x16 &
