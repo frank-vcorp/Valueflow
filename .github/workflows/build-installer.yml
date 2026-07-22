@@ -65,21 +65,33 @@ jobs:
           docker --version
           echo ""
 
+          # Verificar estructura antes de compilar
+          echo "=== Files in installer/ ==="
+          ls -la installer/
+          echo ""
+
           # Crear directorio de salida
           mkdir -p installer/build_output
 
-          # Ejecutar ISCC desde el directorio installer/ (así el OutputDir es relativo correcto)
+          # Ejecutar ISCC desde el directorio /work/installer (que es el dir installer del repo)
+          # OutputDir=build_output es relativo a este working dir, así que el output va a installer/build_output
           docker run --rm \
             -v "$(pwd):/work" \
             -w /work/installer \
             amake/innosetup:latest \
             /opt/innosetup/ISCC.exe installer.iss 2>&1
 
+          # Listar archivos generados
+          echo ""
+          echo "=== After compile: installer/build_output/ ==="
+          ls -la installer/build_output/ 2>&1 || echo "No build_output directory"
+          echo ""
+          echo "=== All installer/ ==="
+          ls -la installer/
+
           # Verificar que se generó el .exe
           if [ ! -f "installer/build_output/Valueflow-Setup-v1.0.exe" ]; then
             echo "::error::Installer not generated"
-            echo "Looking in installer/build_output/:"
-            ls -la installer/build_output/ 2>&1 || echo "No directory"
             exit 1
           fi
 
