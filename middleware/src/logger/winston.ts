@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Writable } from 'node:stream';
 import winston from 'winston';
 import { env } from '../config/env';
+import { hybridFormat } from './format';
 
 fs.mkdirSync(env.logDir, { recursive: true });
 
@@ -27,7 +28,7 @@ const redactFormat = winston.format((info) => {
   if (!hasSecrets) return info;
   return redact(info) as winston.Logform.TransformableInfo;
 });
-const jsonFormat = winston.format.combine(
+const logFormat = winston.format.combine(
   redactFormat(),
   // Timestamp con zona horaria local de México (America/Mexico_City).
   // El offset respecto a UTC se incluye en el ISO 8601 (ej. -06:00)
@@ -51,7 +52,7 @@ const jsonFormat = winston.format.combine(
   }),
   winston.format.errors({ stack: true }),
   winston.format.splat(),
-  winston.format.json()
+  hybridFormat()
 );
 
 /**
@@ -84,7 +85,17 @@ class DailyFileStream extends Writable {
     if (this.currentStream) {
       this.currentStream.end();
     }
-    this.currentStream = fs.createWriteStream(this.getFilePath(), { flags: 'a' });
+    const filePath = this.getFilePath();
+    const fileIsNew = !fs.existsSync(filePath);
+    this.currentStream = fs.createWriteStream(filePath, { flags: 'a' });
+    // Cabecera SOLO cuando el archivo del día se crea por primera vez.
+    // En arranques sucesivos del mismo día, el archivo ya existe y seguimos
+    // en modo append sin duplicar la cabecera.
+    if (fileIsNew) {
+      const today = this.currentDate;
+      const header = `═══════════════════════════════════════════════════════════════════\n  📅 ${today}  Valorflow Middleware\n═══════════════════════════════════════════════════════════════════\n\n`;
+      this.currentStream.write(header);
+    }
   }
 
   private checkRollover(): void {
@@ -113,23 +124,17 @@ class DailyFileStream extends Writable {
   }
 }
 
-// Stream de archivo
+// Stream de archivo por día (DailyFileStream escribe cabecera al crear archivo nuevo).
 const fileStream = new DailyFileStream(env.logDir);
 
-// Usar File transport directamente (más confiable que Stream transport).
-// Calculamos el archivo del día actual.
-const today = new Date().toISOString().split('T')[0];
-const logFilePath = path.join(env.logDir, `${today}-middleware.log`);
-
-const transport = new winston.transports.File({
-  filename: logFilePath,
-  format: jsonFormat,
-  options: { flags: 'a' }
+const transport = new winston.transports.Stream({
+  stream: fileStream,
+  format: logFormat
 });
 
 export const logger = winston.createLogger({
   level: env.logLevel,
-  format: jsonFormat,
+  format: logFormat,
   defaultMeta: { service: 'siemens-middleware' },
   transports: [transport, new winston.transports.Console()]
 });
