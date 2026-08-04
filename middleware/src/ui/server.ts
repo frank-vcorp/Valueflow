@@ -46,6 +46,12 @@ function createServer(): express.Express {
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
   app.use('/images', express.static(publicDir));
+
+  // Screenshots del manual (servidos antes del auth para que la ruta /docs
+  // siempre encuentre el HTML aunque el cwd no tenga dist/docs a mano).
+  const docsAssetsDir = path.resolve(process.cwd(), 'dist/docs/screenshots');
+  app.use('/docs/screenshots', express.static(docsAssetsDir));
+
   app.use((req, res, next) => basicAuth(req, res, next));
 
   app.get('/', (_req, res) => {
@@ -93,6 +99,21 @@ function createServer(): express.Express {
   app.post('/api/actions/test-siemens', async (_req, res) => { try { const status = await testSiemensConnection(); res.send(`<p>Siemens respondió HTTP ${status}.</p>`); } catch (error) { res.status(502).send(`<p class="text-red-700">Error Siemens: ${escapeHtml(safeError(error).message)}</p>`); } });
   app.post('/api/actions/test-sae', async (_req, res) => { try { await pool.testConnection(); res.send('<p class="text-green-700">Conexión SAE disponible.</p>'); } catch (error) { res.status(503).send(`<p class="text-red-700">Error Firebird: ${escapeHtml(safeError(error).message)}</p>`); } });
   app.get('/api/logs/download', (_req, res) => { const files = fs.readdirSync(env.logDir).filter((file) => file.endsWith('.log')).sort(); const file = files.at(-1); if (!file) { res.status(404).send('No hay logs'); return; } res.download(path.join(env.logDir, file)); });
+
+  // Manual HTML servido desde dist/docs (autenticado por middleware global)
+  app.get('/docs', (_req, res) => {
+    const candidates = [
+      path.resolve(process.cwd(), 'dist/docs/MANUAL_USUARIO.html'),
+      path.resolve(process.cwd(), 'docs/MANUAL_USUARIO.html')
+    ];
+    const manualPath = candidates.find((candidate) => fs.existsSync(candidate));
+    if (!manualPath) {
+      res.status(404).send('Manual no encontrado. Ejecute "npm run build:docs" antes de iniciar el middleware.');
+      return;
+    }
+    res.sendFile(manualPath);
+  });
+
   app.use((_req, res) => res.status(404).send('No encontrado'));
   return app;
 }

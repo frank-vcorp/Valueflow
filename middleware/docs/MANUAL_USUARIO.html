@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manual de Usuario — Middleware Repaga × Siemens PoSi</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 20px 40px;
+      line-height: 1.65;
+      color: #1f2937;
+      background: #ffffff;
+    }
+    h1 {
+      color: #009999;
+      border-bottom: 3px solid #009999;
+      padding-bottom: 10px;
+      margin-bottom: 24px;
+      font-size: 2em;
+    }
+    h2 {
+      color: #009999;
+      margin-top: 36px;
+      border-left: 5px solid #009999;
+      padding-left: 14px;
+      font-size: 1.5em;
+    }
+    h3 {
+      color: #374151;
+      margin-top: 26px;
+      font-size: 1.2em;
+    }
+    h4 {
+      color: #4b5563;
+      margin-top: 20px;
+      font-size: 1.05em;
+    }
+    img {
+      max-width: 100%;
+      height: auto;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+      display: block;
+      margin: 24px auto;
+    }
+    code {
+      background: #f3f4f6;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-family: 'Courier New', Menlo, monospace;
+      font-size: 0.92em;
+      color: #be185d;
+    }
+    pre {
+      background: #1f2937;
+      color: #f9fafb;
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      line-height: 1.5;
+    }
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 18px 0;
+      font-size: 0.95em;
+    }
+    th, td {
+      border: 1px solid #d1d5db;
+      padding: 9px 13px;
+      text-align: left;
+    }
+    th {
+      background: #f3f4f6;
+      font-weight: 600;
+    }
+    blockquote {
+      border-left: 4px solid #009999;
+      margin: 18px 0;
+      padding: 6px 18px;
+      color: #4b5563;
+      background: #f0fdfa;
+      border-radius: 0 6px 6px 0;
+    }
+    a {
+      color: #009999;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #e5e7eb;
+      margin: 32px 0;
+    }
+    ul, ol {
+      padding-left: 24px;
+    }
+    li {
+      margin: 4px 0;
+    }
+    p {
+      margin: 12px 0;
+    }
+    strong {
+      color: #111827;
+    }
+    @media (max-width: 720px) {
+      body { margin: 20px auto; padding: 0 14px 30px; }
+      h1 { font-size: 1.6em; }
+      h2 { font-size: 1.25em; }
+    }
+  </style>
+</head>
+<body>
+<h1>Manual de Usuario — Middleware Repaga × Siemens PoSi</h1>
+<p><strong>Para:</strong> Ing. Francisco Aguirre — Representaciones Aga de Saltillo
+<strong>Aplicación:</strong> Valueflow Middleware v1.0
+<strong>Sistema origen:</strong> Aspel SAE 10 (Firebird 5.0)
+<strong>Sistema destino:</strong> Siemens PoSi Portal</p>
+<hr>
+<h2>📖 ¿Qué es este software?</h2>
+<p>Este software conecta su sistema <strong>Aspel SAE 10</strong> con el portal <strong>Siemens PoSi</strong>, enviando <strong>automáticamente</strong> todos los días:</p>
+<ul>
+<li>📦 Su <strong>inventario</strong> (productos marca Siemens) a las <strong>02:00 AM</strong></li>
+<li>💰 Sus <strong>ventas</strong> (facturas con productos marca Siemens) a las <strong>03:00 AM</strong></li>
+</ul>
+<p>Todo esto <strong>sin que usted tenga que hacer nada</strong>. El sistema corre como un servicio de Windows en su PC y trabaja en segundo plano.</p>
+<p><strong>Usted solo necesita saber cómo abrir la interfaz, ver si todo está bien, y cambiar la contraseña de Siemens cuando se lo pidan.</strong></p>
+<hr>
+<h2>🚀 Cómo abrir el sistema</h2>
+<h3>Paso 1 — Abrir el navegador</h3>
+<ol>
+<li><p>Abra <strong>Google Chrome</strong> o <strong>Microsoft Edge</strong> (cualquier navegador moderno)</p>
+</li>
+<li><p>En la barra de direcciones escriba exactamente:</p>
+<pre><code>http://localhost:4567
+</code></pre>
+</li>
+<li><p>Presione <strong>Enter</strong></p>
+</li>
+</ol>
+<blockquote>
+<p>💡 <strong>¿Qué es &quot;localhost&quot;?</strong> Es la dirección de su propia computadora. No abre internet, solo el programa que está instalado en su PC.</p>
+</blockquote>
+<h3>Paso 2 — Iniciar sesión</h3>
+<p>La primera vez le pedirá usuario y contraseña:</p>
+<table>
+<thead>
+<tr>
+<th>Campo</th>
+<th>Valor</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Usuario</strong></td>
+<td><code>admin</code></td>
+</tr>
+<tr>
+<td><strong>Contraseña</strong></td>
+<td>La que se configuró durante la instalación</td>
+</tr>
+</tbody></table>
+<blockquote>
+<p>Si olvidó la contraseña, contacte a su proveedor (VCorp).</p>
+</blockquote>
+<p>Una vez dentro, verá un menú oscuro con 5 opciones en la parte superior:</p>
+<ul>
+<li><strong>Dashboard</strong></li>
+<li><strong>Configuración</strong></li>
+<li><strong>Acciones</strong></li>
+<li><strong>Logs</strong></li>
+<li><strong>Diagnóstico</strong></li>
+</ul>
+<p>Vamos a ver cada una.</p>
+<hr>
+<h2>📊 Pantalla 1 — Dashboard (la principal)</h2>
+<p><img src="../docs/screenshots/01-dashboard.png" alt="Dashboard"></p>
+<h3>¿Qué es?</h3>
+<p>Es la pantalla de inicio. Le muestra <strong>de un vistazo</strong> si todo está funcionando bien.</p>
+<h3>¿Qué muestra?</h3>
+<ol>
+<li><p><strong>Logos en la parte superior</strong></p>
+<ul>
+<li>Logo de <strong>Representaciones Aga</strong> (izquierda)</li>
+<li>Sello de <strong>Siemens Approved Partner</strong> (derecha, con el ambiente actual: QUA o PRD)</li>
+</ul>
+</li>
+<li><p><strong>Dos tarjetas grandes</strong> — estado de cada trabajo automático:</p>
+<ul>
+<li><strong>Inventario</strong> (envía a las 02:00 AM)</li>
+<li><strong>Ventas</strong> (envía a las 03:00 AM)</li>
+</ul>
+<p>Cada tarjeta muestra:</p>
+<ul>
+<li>🟢 <strong>Estado:</strong> <code>correcto</code> (verde) o <code>con error</code> (rojo) o <code>sin ejecución</code> (gris)</li>
+<li><strong>Registros enviados:</strong> cuántos productos o facturas se enviaron</li>
+<li><strong>Última ejecución:</strong> fecha y hora de la última vez que corrió</li>
+</ul>
+</li>
+<li><p><strong>Tabla &quot;Últimas ejecuciones&quot;:</strong> historial de los últimos 10 envíos, con su estado.</p>
+</li>
+<li><p><strong>Pie de página:</strong> &quot;Servicio local · Solo lectura sobre Firebird · API Key protegida&quot; — esto significa que el programa <strong>NO modifica</strong> su sistema Aspel, solo lee.</p>
+</li>
+</ol>
+<h3>¿Cuándo revisarla?</h3>
+<ul>
+<li>Una vez al día, por la mañana, para confirmar que la noche anterior se enviaron los datos sin errores.</li>
+<li>Si el área de Siemens le avisa que no recibió información.</li>
+</ul>
+<h3>🟢 Estado normal</h3>
+<p>Si ve esto, todo está bien:</p>
+<ul>
+<li>Las dos tarjetas dicen <strong>&quot;correcto&quot;</strong> (verde)</li>
+<li>La tabla muestra ejecuciones de hoy y ayer con estado OK</li>
+</ul>
+<h3>🔴 Estado con problemas</h3>
+<p>Si ve <strong>&quot;con error&quot;</strong> (rojo) o &quot;sin ejecución&quot; (gris):</p>
+<ol>
+<li>Vaya a la pestaña <strong>&quot;Logs&quot;</strong> (la cuarta opción del menú)</li>
+<li>Anote la fecha y hora de la última ejecución con error</li>
+<li>Contacte a soporte</li>
+</ol>
+<hr>
+<h2>⚙️ Pantalla 2 — Configuración</h2>
+<p><img src="../docs/screenshots/02-configuracion.png" alt="Configuración"></p>
+<h3>¿Qué es?</h3>
+<p>Aquí se cambian los <strong>datos de conexión</strong> del sistema. <strong>No la use a menos que se lo pida el soporte o cambie la contraseña de Siemens.</strong></p>
+<h3>¿Qué muestra?</h3>
+<p><strong>Bloque 1 — Identidad de Siemens:</strong></p>
+<ul>
+<li><strong>Base URL:</strong> la dirección del portal de Siemens (no cambiar)</li>
+<li><strong>Ambiente:</strong> QUA (pruebas) o PRD (producción real)</li>
+<li><strong>Sender ID:</strong> el identificador único de su empresa (no cambiar)</li>
+<li><strong>Tamaño batch:</strong> cantidad máxima de registros por envío (3000 está bien)</li>
+</ul>
+<p><strong>Bloque 2 — Líneas Siemens:</strong>
+Lista de las 15 líneas de producto que se consideran &quot;marca Siemens&quot;:
+<code>BAJA, SINU, SIMAT, LP, DRIVE, MOTOR, SINUM, SERVI, OBSO, SENSO, SERVO, INSTR, UPS, SIMA, ESPE</code></p>
+<blockquote>
+<p>Si Siemens agrega una nueva línea de producto, se puede agregar aquí.</p>
+</blockquote>
+<p><strong>Bloque 3 — Trabajos automáticos:</strong></p>
+<ul>
+<li>☑️ <strong>Inventario habilitado</strong> (corre a las 02:00 AM)</li>
+<li>☑️ <strong>Ventas habilitadas</strong> (corre a las 03:00 AM)</li>
+<li>☐ Si los desmarca, ese trabajo deja de correr automáticamente</li>
+</ul>
+<p><strong>Bloque 4 — Campos opcionales:</strong>
+Información extra que se puede enviar o no. Por defecto todos están apagados. <strong>No los active a menos que Siemens se los pida.</strong></p>
+<p><strong>Bloque 5 — API Key Siemens (MUY IMPORTANTE):</strong>
+Aquí se cambia la <strong>contraseña de Siemens</strong> sin reiniciar nada.</p>
+<h3>🔐 Cómo cambiar la contraseña de Siemens (cuando se la pidan)</h3>
+<ol>
+<li><strong>No</strong> cambie el resto de la pantalla</li>
+<li>Baje hasta el bloque <strong>&quot;API Key Siemens&quot;</strong></li>
+<li>Haga clic en el campo de texto (que dice &quot;Nueva API Key (mínimo 32 caracteres)&quot;)</li>
+<li><strong>Pegue</strong> la nueva clave que le dio Siemens (Ctrl+V)</li>
+<li>Haga clic en el botón naranja <strong>&quot;Actualizar&quot;</strong></li>
+<li>Espere unos segundos — el sistema valida automáticamente</li>
+</ol>
+<p><strong>Después de actualizar:</strong> la próxima vez que el sistema envíe información (02:00 o 03:00 AM), usará la nueva clave automáticamente. No se reinicia nada.</p>
+<blockquote>
+<p>🔒 <strong>Seguridad:</strong> la clave nunca se muestra completa, solo enmascarada (ejemplo: <code>I1k****gbv</code>).</p>
+</blockquote>
+<h3>⏰ Cómo cambiar los horarios</h3>
+<p>Si necesita que el inventario o las ventas corran a otra hora:</p>
+<ol>
+<li>Cambie el campo <strong>&quot;Inventario habilitado&quot;</strong> o <strong>&quot;Ventas habilitadas&quot;</strong> (use formato de Linux: <code>0 2 * * *</code> = a las 02:00 AM todos los días)</li>
+<li><strong>Mejor:</strong> pida a soporte que lo haga por usted para evitar errores</li>
+</ol>
+<p><strong>Si desmarca &quot;Inventario habilitado&quot; o &quot;Ventas habilitadas&quot;:</strong> ese trabajo deja de correr automáticamente. El otro sigue funcionando.</p>
+<hr>
+<h2>🎬 Pantalla 3 — Acciones</h2>
+<p><img src="../docs/screenshots/03-acciones.png" alt="Acciones"></p>
+<h3>¿Qué es?</h3>
+<p>Aquí puede <strong>ejecutar los envíos manualmente</strong> sin esperar a la hora programada. También hay pruebas de conexión.</p>
+<h3>Los 4 botones (en 2 filas)</h3>
+<p><strong>Fila 1 — Botones azules (los más usados):</strong></p>
+<p>🟦 <strong>Ejecutar Inventario ahora</strong></p>
+<ul>
+<li>Hace el envío de inventario de inmediato</li>
+<li><strong>Úselo solo si necesita reenviar</strong> (por ejemplo, Siemens le dice que faltó información)</li>
+</ul>
+<p>🟦 <strong>Ejecutar Ventas ahora</strong></p>
+<ul>
+<li>Hace el envío de ventas de inmediato</li>
+<li><strong>Úselo solo si necesita reenviar</strong></li>
+</ul>
+<p><strong>Fila 2 — Botones grises (los de diagnóstico):</strong></p>
+<p>⬛ <strong>Test conexión Siemens</strong></p>
+<ul>
+<li>Solo verifica que el sistema puede hablar con el portal de Siemens</li>
+<li><strong>Úselo si sospecha problemas de conexión</strong></li>
+<li>Muestra el resultado abajo: &quot;Siemens respondió HTTP 200&quot; (correcto) o un error</li>
+</ul>
+<p>⬛ <strong>Test conexión SAE</strong></p>
+<ul>
+<li>Solo verifica que el sistema puede leer su Aspel SAE 10</li>
+<li><strong>Úselo si sospecha que no se están leyendo los datos</strong></li>
+<li>Muestra el resultado abajo</li>
+</ul>
+<h3>⚠️ Recomendaciones importantes</h3>
+<ul>
+<li><strong>No haga clic</strong> en &quot;Ejecutar Inventario ahora&quot; o &quot;Ejecutar Ventas ahora&quot; si no está seguro — esos botones hacen el envío real a Siemens.</li>
+<li>Los botones de <strong>Test</strong> (los grises) son seguros, solo verifican conexión.</li>
+<li>Si hace clic en un botón de ejecución, <strong>espere</strong> a que termine (puede tardar 5-15 minutos). No cierre la ventana.</li>
+</ul>
+<h3>Resultado de una acción</h3>
+<p>Después de hacer clic, aparece debajo un mensaje:</p>
+<ul>
+<li>🟢 Verde: &quot;Siemens respondió HTTP 200&quot; o &quot;Job de inventario terminado&quot;</li>
+<li>🔴 Rojo: &quot;Error: ...&quot; con la descripción del problema</li>
+</ul>
+<hr>
+<h2>📜 Pantalla 4 — Logs</h2>
+<p><img src="../docs/screenshots/04-logs.png" alt="Logs"></p>
+<h3>¿Qué es?</h3>
+<p>Es el <strong>historial de todo lo que ha hecho</strong> el sistema: cada envío, cada error, cada conexión. Como una &quot;caja negra&quot; de avión.</p>
+<h3>¿Cuándo revisarla?</h3>
+<ul>
+<li>Cuando algo falla y el Dashboard muestra error</li>
+<li>Cuando Siemens reporta que no recibió datos</li>
+<li>Periódicamente, para verificar que todo está bien</li>
+</ul>
+<h3>Cómo descargar el log del día</h3>
+<ol>
+<li>Verá una lista con archivos (uno por día)</li>
+<li>Haga clic en <strong>&quot;Descargar log completo&quot;</strong> arriba de la lista</li>
+<li>Se descarga un archivo <code>.log</code> que puede abrir con el Bloc de Notas</li>
+</ol>
+<h3>Qué hay dentro del archivo (si necesita revisarlo)</h3>
+<p>Líneas como estas:</p>
+<pre><code>{&quot;level&quot;:&quot;info&quot;,&quot;message&quot;:&quot;Schedulers iniciados&quot;,&quot;timestamp&quot;:&quot;2026-07-21T08:00:00.000Z&quot;}
+{&quot;level&quot;:&quot;info&quot;,&quot;message&quot;:&quot;UI iniciada&quot;,&quot;timestamp&quot;:&quot;2026-07-21T08:00:01.000Z&quot;}
+{&quot;level&quot;:&quot;info&quot;,&quot;message&quot;:&quot;Prueba de conexión Siemens ejecutada&quot;,&quot;status&quot;:201}
+</code></pre>
+<p><strong>Qué significan:</strong></p>
+<ul>
+<li><code>level: info</code> = todo bien</li>
+<li><code>level: warn</code> = advertencia (puede ser normal)</li>
+<li><code>level: error</code> = problema, hay que revisar</li>
+</ul>
+<blockquote>
+<p>🔒 <strong>Seguridad:</strong> las claves y contraseñas NUNCA aparecen completas en el log. Solo se ven enmascaradas.</p>
+</blockquote>
+<hr>
+<h2>🩺 Pantalla 5 — Diagnóstico</h2>
+<p><img src="../docs/screenshots/05-diagnostico.png" alt="Diagnóstico"></p>
+<h3>¿Qué es?</h3>
+<p>Muestra la <strong>&quot;salud&quot;</strong> del sistema: versión del software, rutas de instalación, conexión a Aspel. Es información técnica que el soporte puede pedirle.</p>
+<h3>¿Cuándo usarla?</h3>
+<ul>
+<li><strong>Cuando soporte se lo pida:</strong> envíeles una captura de esta pantalla</li>
+<li><strong>Si quiere verificar</strong> que todo está instalado correctamente</li>
+</ul>
+<h3>Qué muestra (resumen)</h3>
+<ul>
+<li><strong>Versiones:</strong> Node.js, driver de Firebird, etc.</li>
+<li><strong>Conexiones:</strong> si el sistema está conectado a Aspel y a Siemens</li>
+<li><strong>Recursos del sistema:</strong> cuánta memoria y CPU usa</li>
+<li><strong>API Key:</strong> enmascarada (ejemplo: <code>I1k****gbv</code>)</li>
+</ul>
+<hr>
+<h2>❓ Preguntas frecuentes (FAQ)</h2>
+<h3>¿El sistema corre solo sin que yo haga nada?</h3>
+<p><strong>Sí.</strong> A las 02:00 AM envía inventario y a las 03:00 AM envía ventas, todos los días, automáticamente.</p>
+<h3>¿Cómo sé si todo está bien?</h3>
+<p>Revise el <strong>Dashboard</strong> cada mañana. Las dos tarjetas deben estar en <strong>verde</strong>.</p>
+<h3>¿Qué pasa si se va la luz o se reinicia la PC?</h3>
+<p>El programa <strong>arranca solo</strong> cuando se enciende la PC (es un servicio de Windows). No se pierde información. El próximo envío programado se ejecuta normalmente.</p>
+<h3>¿Puedo cerrar la ventana del navegador?</h3>
+<p><strong>Sí.</strong> El sistema sigue trabajando en segundo plano. Solo necesita abrir el navegador para verificar el Dashboard o cambiar configuración.</p>
+<h3>¿Cada cuánto se debe cambiar la contraseña de Siemens?</h3>
+<p>Cuando Siemens se lo pida (usualmente cada 6-12 meses). Se cambia desde la pantalla <strong>Configuración</strong> en 30 segundos.</p>
+<h3>¿El sistema modifica mi Aspel SAE?</h3>
+<p><strong>No, jamás.</strong> Solo lee información. Su Aspel SAE 10 sigue exactamente igual que antes. Esto está protegido por permisos de solo-lectura en la base de datos.</p>
+<h3>¿Qué pasa si Siemens cambia algo en su portal?</h3>
+<p>Si hay un error de comunicación, el sistema reintenta automáticamente hasta 5 veces con pausas entre cada intento. Si después de eso sigue fallando, se registra el error en los logs y se muestra en el Dashboard.</p>
+<h3>¿Necesito hacer mantenimiento?</h3>
+<p><strong>No.</strong> El sistema se mantiene solo. Solo revise el Dashboard de vez en cuando.</p>
+<hr>
+<h2>📞 ¿Necesita ayuda?</h2>
+<p><strong>Proveedor:</strong> VCorp — Frank Saavedra
+<strong>Email:</strong> <a href="mailto:frank@vcorp.mx">frank@vcorp.mx</a>
+<strong>Cliente:</strong> Representaciones Aga de Saltillo
+<strong>Contacto técnico:</strong> Ing. Francisco Aguirre</p>
+<p>Si tiene dudas, contacte a su proveedor. Tenga a la mano:</p>
+<ul>
+<li>Una <strong>captura de pantalla</strong> del Dashboard o de la pantalla donde está el problema</li>
+<li>La <strong>fecha y hora</strong> del problema</li>
+<li>El <strong>mensaje de error</strong> exacto (si aparece uno)</li>
+</ul>
+<hr>
+<p><em>Manual generado el 2026-08-04 — Versión 1.0</em>
+<em>Compatible con Middleware Repaga × Siemens PoSi v1.0</em></p>
+
+</body>
+</html>
