@@ -110,3 +110,33 @@ class FirebirdPool {
 }
 
 export const pool = new FirebirdPool();
+
+/**
+ * Detecta si un error corresponde al módulo nativo de Firebird no disponible
+ * (típico en Linux donde node-gyp no compila). Distingue este caso del error
+ * real para que el dashboard no muestre "failed" cuando el problema es del
+ * entorno de desarrollo, no del software.
+ *
+ * Implementación: por mensaje del error (string includes, case-insensitive).
+ * Decisión técnica confirmada en SPEC-IMPL-20260804-01 §3 y §5.
+ */
+export function isFirebirdUnavailableError(error: unknown): boolean {
+  if (!error) return false;
+  const message = String(
+    (error as { message?: string })?.message ??
+    (error as { toString?: () => string })?.toString?.() ??
+    error
+  ).toLowerCase();
+
+  const patterns = [
+    'bindings file',
+    'could not locate',
+    'compiled/',
+    'node-firebird',
+    'addon.node',
+    'cannot find module',
+    'node-gyp'
+  ];
+
+  return patterns.some((pattern) => message.includes(pattern));
+}

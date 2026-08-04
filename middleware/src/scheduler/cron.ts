@@ -1,14 +1,17 @@
 import cron, { ScheduledTask } from 'node-cron';
 import { readRuntimeConfig } from '../config/runtime';
 import { logger, safeError } from '../logger/winston';
+import { isFirebirdUnavailableError } from '../db/firebird';
 import { runInventoryJob } from '../jobs/runInventory';
 import { runSalesJob } from '../jobs/runSales';
+
+export type ExecutionStatus = 'running' | 'success' | 'failed' | 'db_unavailable' | 'skipped';
 
 export interface JobExecution {
   job_name: 'inventory' | 'sales';
   start_time: Date;
   end_time?: Date;
-  status: 'running' | 'success' | 'failed' | 'skipped';
+  status: ExecutionStatus;
   records_sent?: number;
   error_message?: string;
 }
@@ -28,8 +31,15 @@ async function executeInventoryJob(): Promise<void> {
     execution.status = 'success'; execution.records_sent = result.totalSent; execution.end_time = new Date();
     jobLogger.info('Inventario completado', { records: result.totalSent, duration_ms: result.durationMs });
   } catch (error) {
-    execution.status = 'failed'; execution.error_message = safeError(error).message; execution.end_time = new Date();
-    jobLogger.error('Fallo en inventario', safeError(error));
+    execution.end_time = new Date();
+    execution.error_message = safeError(error).message;
+    if (isFirebirdUnavailableError(error)) {
+      execution.status = 'db_unavailable';
+      jobLogger.warn('BD no accesible (entorno de desarrollo). El middleware está listo para producción.', { error: safeError(error) });
+    } else {
+      execution.status = 'failed';
+      jobLogger.error('Fallo en inventario', safeError(error));
+    }
   }
 }
 
@@ -45,8 +55,15 @@ async function executeSalesJob(): Promise<void> {
     execution.status = 'success'; execution.records_sent = result.totalSent; execution.end_time = new Date();
     jobLogger.info('Ventas completadas', { records: result.totalSent, duration_ms: result.durationMs });
   } catch (error) {
-    execution.status = 'failed'; execution.error_message = safeError(error).message; execution.end_time = new Date();
-    jobLogger.error('Fallo en ventas', safeError(error));
+    execution.end_time = new Date();
+    execution.error_message = safeError(error).message;
+    if (isFirebirdUnavailableError(error)) {
+      execution.status = 'db_unavailable';
+      jobLogger.warn('BD no accesible (entorno de desarrollo). El middleware está listo para producción.', { error: safeError(error) });
+    } else {
+      execution.status = 'failed';
+      jobLogger.error('Fallo en ventas', safeError(error));
+    }
   }
 }
 

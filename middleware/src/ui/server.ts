@@ -37,7 +37,26 @@ function statusCard(job: 'inventory' | 'sales'): string {
   const execution = getExecutionHistory().find((item) => item.job_name === job);
   const label = job === 'inventory' ? 'Inventario' : 'Ventas';
   const status = execution?.status ?? 'sin ejecución';
-  return `<article class="bg-white rounded-lg shadow p-5"><h2 class="font-semibold text-lg">${label}</h2><p class="mt-2">Estado: <strong>${escapeHtml(status)}</strong></p><p class="text-sm text-slate-500">Registros enviados: ${execution?.records_sent ?? 0}</p><p class="text-sm text-slate-500">Última ejecución: ${execution?.start_time.toLocaleString('es-MX') ?? 'N/A'}</p></article>`;
+  const { label: statusLabel, colorClass } = statusDisplay(status);
+  return `<article class="bg-white rounded-lg shadow p-5"><h2 class="font-semibold text-lg">${label}</h2><p class="mt-2">Estado: <strong class="${colorClass}">${escapeHtml(statusLabel)}</strong></p><p class="text-sm text-slate-500">Registros enviados: ${execution?.records_sent ?? 0}</p><p class="text-sm text-slate-500">Última ejecución: ${execution?.start_time.toLocaleString('es-MX') ?? 'N/A'}</p></article>`;
+}
+
+function statusDisplay(status: string): { label: string; colorClass: string } {
+  switch (status) {
+    case 'success':
+      return { label: 'correcto', colorClass: 'text-green-700' };
+    case 'failed':
+      return { label: 'con error', colorClass: 'text-red-700' };
+    case 'db_unavailable':
+      // Color ámbar/naranja (#f59e0b, Tailwind text-amber-500) para distinguir del rojo de "failed".
+      return { label: 'BD no accesible', colorClass: 'text-amber-500' };
+    case 'running':
+      return { label: 'en ejecución', colorClass: 'text-slate-500' };
+    case 'skipped':
+      return { label: 'omitido', colorClass: 'text-slate-500' };
+    default:
+      return { label: status, colorClass: 'text-slate-700' };
+  }
 }
 
 function createServer(): express.Express {
@@ -55,7 +74,10 @@ function createServer(): express.Express {
   app.use((req, res, next) => basicAuth(req, res, next));
 
   app.get('/', (_req, res) => {
-    const history = getExecutionHistory().map((item) => `<tr class="border-t"><td class="p-2">${escapeHtml(item.job_name)}</td><td class="p-2">${escapeHtml(item.status)}</td><td class="p-2">${item.records_sent ?? 0}</td><td class="p-2">${item.start_time.toLocaleString('es-MX')}</td></tr>`).join('');
+    const history = getExecutionHistory().map((item) => {
+      const { label, colorClass } = statusDisplay(item.status);
+      return `<tr class="border-t"><td class="p-2">${escapeHtml(item.job_name)}</td><td class="p-2"><span class="${colorClass} font-semibold">${escapeHtml(label)}</span></td><td class="p-2">${item.records_sent ?? 0}</td><td class="p-2">${item.start_time.toLocaleString('es-MX')}</td></tr>`;
+    }).join('');
     res.send(render('dashboard', { cards: statusCard('inventory') + statusCard('sales'), history: `<div class="overflow-auto"><table class="w-full text-sm"><thead><tr><th class="text-left p-2">Job</th><th class="text-left p-2">Estado</th><th class="text-left p-2">Registros</th><th class="text-left p-2">Inicio</th></tr></thead><tbody>${history || '<tr><td class="p-2" colspan="4">Sin ejecuciones.</td></tr>'}</tbody></table></div>` }));
   });
 
