@@ -100,3 +100,8 @@ __pycache__/
 
 # ===== Playwright =====
 .playwright-mcp/
+
+# ===== Distribution packages =====
+dist-pkg/
+*.zip
+!middleware/docs/**/*.zip

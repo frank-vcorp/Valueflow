@@ -226,9 +226,20 @@ UI_PASSWORD_HASH=$bcryptHash
 # Logging
 LOG_LEVEL=info
 LOG_DIR=$InstallDir\logs
+
+# data_source: production (cliente Windows, datos reales) | qa (testing) | demo (sintético)
+DATA_SOURCE=demo
 "@
 $envContent | Out-File -FilePath "$InstallDir\.env" -Encoding UTF8 -NoNewline
 Write-OK ".env creado"
+
+Write-Host ""
+Write-Host "  IMPORTANTE: Para PRODUCCION, edite el archivo .env y cambie:" -ForegroundColor Yellow
+Write-Host "    DATA_SOURCE=demo"
+Write-Host "  Por:"
+Write-Host "    DATA_SOURCE=production" -ForegroundColor Green
+Write-Host "  (ubicacion: $InstallDir\.env)" -ForegroundColor Gray
+Write-Host ""
 
 # Crear config.json desde ejemplo
 $configExample = Get-Content "$InstallDir\config.json.example" -Raw | ConvertFrom-Json
@@ -372,6 +383,23 @@ Write-OK "Desinstalador creado: $uninstallPath"
 
 # ===== Verificar instalación =====
 Write-Step "Verificando instalación..."
+
+# Mostrar modo de operacion segun DATA_SOURCE
+$envFile = "$InstallDir\.env"
+if (Test-Path $envFile) {
+    $dataSourceLine = Select-String -Path $envFile -Pattern "^DATA_SOURCE=" -ErrorAction SilentlyContinue
+    if ($dataSourceLine) {
+        $dataSource = ($dataSourceLine.Line -split "=", 2)[1].Trim().ToLower()
+        if ($dataSource -eq "production") {
+            Write-OK "Modo PRODUCCION activado (datos reales desde Aspel SAE 10)" -ForegroundColor Green
+        } elseif ($dataSource -eq "qa") {
+            Write-Host "  ✓ Modo QA activado (datos de testing)" -ForegroundColor Cyan
+        } else {
+            Write-Host "  ! Modo DEMO activado (datos sinteticos)" -ForegroundColor Yellow
+            Write-Host "    Para PRODUCCION, cambie DATA_SOURCE=production en .env" -ForegroundColor Yellow
+        }
+    }
+}
 
 Start-Sleep -Seconds 3
 

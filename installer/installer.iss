@@ -95,24 +95,66 @@ Type: filesandordirs; Name: "{app}\config.json"
 Filename: "pm2"; Parameters: "delete siemens-middleware"; Flags: runhidden
 
 [Code]
-// Función para verificar requisitos antes de instalar
-function InitializeSetup: Boolean;
+// Verificar si Node.js está instalado (vía node --version).
+function NodeInstalled: Boolean;
 var
   ResultCode: Integer;
 begin
-  Result := True;
+  Result := Exec('node.exe', '--version', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
 
-  // Verificar Node.js
-  if not Exec('node.exe', '--version', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+// Si Node.js no está, descargar Node.js 20 LTS MSI e instalarlo en silencio.
+// Devuelve True si quedó instalado (o ya estaba), False si falló o el usuario canceló.
+function EnsureNodeJs: Boolean;
+var
+  NodeMsiUrl, NodeMsiPath: String;
+  ResultCode: Integer;
+begin
+  Result := True;
+  if NodeInstalled then Exit;
+
+  if MsgBox('No se detectó Node.js instalado en el sistema.' + #13#10 + #13#10 +
+            'Se descargará Node.js 20 LTS desde nodejs.org y se instalará en modo silencioso.' + #13#10 +
+            '¿Desea continuar?',
+            mbConfirmation, MB_YESNO) = IDNO then
   begin
-    if MsgBox('No se detectó Node.js instalado.' + #13#10 + #13#10 +
-              'El instalador descargará Node.js 20 LTS durante la instalación.' + #13#10 +
-              '¿Desea continuar?',
-              mbConfirmation, MB_YESNO) = IDNO then
-    begin
-      Result := False;
-    end;
+    Result := False;
+    Exit;
   end;
+
+  NodeMsiUrl := 'https://nodejs.org/dist/v20.14.0/node-v20.14.0-x64.msi';
+  NodeMsiPath := ExpandConstant('{tmp}\node-v20.14.0-x64.msi');
+
+  try
+    DownloadTemporaryFile(NodeMsiUrl, NodeMsiPath, '', 0);
+  except
+    if MsgBox('No se pudo descargar Node.js. Verifique su conexión a Internet.' + #13#10 +
+              'Si ya tiene Node.js 20 LTS instalado y sigue este mensaje, ignore y continúe.',
+              mbError, MB_OK) = IDOK then
+      Result := True   // Permitir continuar; install.ps1 reintentará la instalación
+    else
+      Result := False;
+    Exit;
+  end;
+
+  if not Exec('msiexec.exe',
+              '/i "' + NodeMsiPath + '" /quiet /norestart ADDLOCAL=ALL',
+              '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
+  begin
+    MsgBox('Falló la instalación silenciosa de Node.js (código ' + IntToStr(ResultCode) + ').' +
+           #13#10 + 'Puede instalarlo manualmente y volver a ejecutar este instalador.',
+           mbError, MB_OK);
+    Result := False;
+    Exit;
+  end;
+
+  MsgBox('Node.js 20 LTS instalado correctamente.', mbInformation, MB_OK);
+end;
+
+// Función para verificar requisitos antes de instalar
+function InitializeSetup: Boolean;
+begin
+  Result := EnsureNodeJs;
 end;
 
 // Mensaje de finalización

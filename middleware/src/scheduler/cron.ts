@@ -2,6 +2,7 @@ import cron, { ScheduledTask } from 'node-cron';
 import { readRuntimeConfig } from '../config/runtime';
 import { logger, safeError } from '../logger/winston';
 import { isFirebirdUnavailableError } from '../db/firebird';
+import { env } from '../config/env';
 import { runInventoryJob } from '../jobs/runInventory';
 import { runSalesJob } from '../jobs/runSales';
 
@@ -26,7 +27,7 @@ async function executeInventoryJob(): Promise<void> {
   try {
     const config = readRuntimeConfig();
     if (!config.schedules.inventory.enabled) { execution.status = 'skipped'; jobLogger.info('Job de inventario desactivado'); return; }
-    jobLogger.info('Iniciando job de inventario');
+    jobLogger.info('Iniciando job de inventario', { data_source: env.dataSource });
     const result = await runInventoryJob();
     execution.status = 'success'; execution.records_sent = result.totalSent; execution.end_time = new Date();
     jobLogger.info('Inventario completado', { records: result.totalSent, duration_ms: result.durationMs });
@@ -50,7 +51,7 @@ async function executeSalesJob(): Promise<void> {
   try {
     const config = readRuntimeConfig();
     if (!config.schedules.sales.enabled) { execution.status = 'skipped'; jobLogger.info('Job de ventas desactivado'); return; }
-    jobLogger.info('Iniciando job de ventas');
+    jobLogger.info('Iniciando job de ventas', { data_source: env.dataSource });
     const result = await runSalesJob();
     execution.status = 'success'; execution.records_sent = result.totalSent; execution.end_time = new Date();
     jobLogger.info('Ventas completadas', { records: result.totalSent, duration_ms: result.durationMs });

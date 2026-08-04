@@ -64,7 +64,17 @@ export const hybridFormat = winston.format((info) => {
   const rawTimestamp = typeof info.timestamp === 'string' ? info.timestamp : new Date().toISOString();
   const timeOnly = rawTimestamp.includes('T') ? (rawTimestamp.split('T')[1] ?? rawTimestamp) : rawTimestamp;
 
-  const truncatedMsg = truncate(message, MESSAGE_MAX);
+  // Prefijo según data_source (solo si el campo existe en el meta del log entry).
+  // 'production' → sin prefijo (caso normal); 'qa' → [QA]; 'demo' → [DEMO].
+  const rawDataSource = info['data_source'];
+  let dataSourcePrefix = '';
+  if (typeof rawDataSource === 'string') {
+    const ds = rawDataSource.toLowerCase();
+    if (ds === 'qa') dataSourcePrefix = '[QA] ';
+    else if (ds === 'demo') dataSourcePrefix = '[DEMO] ';
+  }
+
+  const truncatedMsg = truncate(dataSourcePrefix + message, MESSAGE_MAX);
 
   const errorField = info['error'];
   const truncatedError = errorField ? truncateError(errorField, ERROR_MAX) : '';
