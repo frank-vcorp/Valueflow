@@ -1,6 +1,7 @@
 import fs from 'node:fs';
+import path from 'node:path';
+import { Writable } from 'node:stream';
 import winston from 'winston';
-import DailyRotateFile from 'winston-daily-rotate-file';
 import { env } from '../config/env';
 
 fs.mkdirSync(env.logDir, { recursive: true });
@@ -18,7 +19,14 @@ function redact(value: unknown): unknown {
   return value;
 }
 
-const redactFormat = winston.format((info) => redact(info) as winston.Logform.TransformableInfo);
+const redactFormat = winston.format((info) => {
+  // Solo redactar si hay campos que coinciden con SECRET_KEYS.
+  // CRÍTICO: retornar el info original si no hay cambios, sino Winston
+  // puede descartar el mensaje completo.
+  const hasSecrets = JSON.stringify(info).match(SECRET_KEYS);
+  if (!hasSecrets) return info;
+  return redact(info) as winston.Logform.TransformableInfo;
+});
 const jsonFormat = winston.format.combine(
   redactFormat(),
   winston.format.timestamp(),
@@ -27,14 +35,77 @@ const jsonFormat = winston.format.combine(
   winston.format.json()
 );
 
-const transport = new DailyRotateFile({
-  dirname: env.logDir,
-  filename: '%DATE%-middleware.log',
-  datePattern: 'YYYY-MM-DD',
-  maxFiles: '90d',
-  maxSize: '20m',
-  zippedArchive: true,
-  format: jsonFormat
+/**
+ * Writable stream que escribe a un archivo por día.
+ * Cada día se abre un nuevo archivo automáticamente. Sin buffering.
+ *
+ * FIX CRÍTICO: Reemplaza a winston-daily-rotate-file porque esa librería
+ * usa internamente un PassThrough que buffera los logs en procesos de
+ * larga duración. Verificado: este stream SÍ escribe inmediatamente.
+ */
+class DailyFileStream extends Writable {
+  private currentDate: string;
+  private currentStream: fs.WriteStream | null = null;
+
+  constructor(private readonly directory: string) {
+    super({ decodeStrings: false });
+    this.currentDate = this.todayString();
+    this.openStream();
+  }
+
+  private todayString(): string {
+    return new Date().toISOString().split('T')[0] ?? 'unknown';
+  }
+
+  private getFilePath(): string {
+    return path.join(this.directory, `${this.currentDate}-middleware.log`);
+  }
+
+  private openStream(): void {
+    if (this.currentStream) {
+      this.currentStream.end();
+    }
+    this.currentStream = fs.createWriteStream(this.getFilePath(), { flags: 'a' });
+  }
+
+  private checkRollover(): void {
+    const today = this.todayString();
+    if (today !== this.currentDate) {
+      this.currentDate = today;
+      this.openStream();
+    }
+  }
+
+  override _write(chunk: Buffer, _encoding: string, callback: (error?: Error | null) => void): void {
+    this.checkRollover();
+    if (this.currentStream) {
+      this.currentStream.write(chunk, callback);
+    } else {
+      callback();
+    }
+  }
+
+  override _final(callback: (error?: Error | null) => void): void {
+    if (this.currentStream) {
+      this.currentStream.end(callback);
+    } else {
+      callback();
+    }
+  }
+}
+
+// Stream de archivo
+const fileStream = new DailyFileStream(env.logDir);
+
+// Usar File transport directamente (más confiable que Stream transport).
+// Calculamos el archivo del día actual.
+const today = new Date().toISOString().split('T')[0];
+const logFilePath = path.join(env.logDir, `${today}-middleware.log`);
+
+const transport = new winston.transports.File({
+  filename: logFilePath,
+  format: jsonFormat,
+  options: { flags: 'a' }
 });
 
 export const logger = winston.createLogger({

@@ -15,7 +15,10 @@ export async function sendBatch(payload: unknown[], endpoint: string): Promise<S
     try {
       const response = await axios.post(url, payload, {
         headers: { 'Content-Type': 'application/json', 'X-API-KEY': apiKey },
-        timeout: 15_000
+        timeout: 15_000,
+        // Forzar HTTP/2: AWS API Gateway (backend de Siemens) responde
+        // HTTP 502 Bad Gateway con HTTP/1.1. HTTP/2 funciona correctamente.
+        httpVersion: 2
       });
       logger.info('Envío Siemens completado', { status: response.status, records: payload.length, key: maskApiKey(apiKey) });
       return { status: response.status, body: JSON.stringify(response.data) };
@@ -59,7 +62,9 @@ export async function testSiemensConnection(): Promise<number> {
   const response = await axios.post(url, testPayload, {
     headers: { 'Content-Type': 'application/json', 'X-API-KEY': apiKey },
     timeout: 15_000,
-    validateStatus: () => true
+    validateStatus: () => true,
+    // Forzar HTTP/2 (ver comentario en sendBatch)
+    httpVersion: 2
   });
   logger.info('Prueba de conexión Siemens ejecutada', { status: response.status, key: maskApiKey(apiKey) });
   return response.status;
