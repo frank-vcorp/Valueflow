@@ -29,7 +29,26 @@ const redactFormat = winston.format((info) => {
 });
 const jsonFormat = winston.format.combine(
   redactFormat(),
-  winston.format.timestamp(),
+  // Timestamp con zona horaria local de México (America/Mexico_City).
+  // El offset respecto a UTC se incluye en el ISO 8601 (ej. -06:00)
+  // para que sea inequívoco. Si el server está en otra zona, Winston
+  // usará la del sistema operativo. Para forzar México, ver más abajo.
+  winston.format.timestamp({
+    format: () => {
+      const d = new Date();
+      // Forzar a America/Mexico_City (CST/CDT según DST)
+      const fmt = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'America/Mexico_City',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false
+      });
+      const parts = fmt.formatToParts(d);
+      const get = (t: string) => parts.find(p => p.type === t)!.value;
+      const tz = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Mexico_City', timeZoneName: 'shortOffset' }).formatToParts(d).find(p => p.type === 'timeZoneName')?.value || '-06:00';
+      return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}${tz.replace('GMT', '')}`;
+    }
+  }),
   winston.format.errors({ stack: true }),
   winston.format.splat(),
   winston.format.json()
