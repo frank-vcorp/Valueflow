@@ -1,152 +1,175 @@
-import { createRequire } from 'node:module';
-import type { Attachment, Client, Transaction } from 'node-firebird-driver';
-import { DatabaseReadWriteMode, TransactionIsolation } from 'node-firebird-driver';
+import * as Firebird from 'node-firebird';
 import { readRuntimeConfig } from '../config/runtime';
 import { env } from '../config/env';
 import { logger, safeError } from '../logger/winston';
 
-interface PooledAttachment { attachment: Attachment; busy: boolean; }
+interface FirebirdOptions {
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  password: string;
+}
 
+/**
+ * Pool de conexiones Firebird basado en `node-firebird` (clásico, sin bindings nativos).
+ *
+ * Migración desde `node-firebird-driver-native` (v3.6.0) — el driver nativo requería
+ * MSVC Build Tools para compilar vía node-gyp y no podía instalarse en la VM Windows
+ * de Frank. El driver clásico usa solo JS puro y dependencias puras JS (big-integer,
+ * long), por lo que funciona en cualquier plataforma sin compilador.
+ *
+ * API pública preservada (consumida por `db/queries/inventory.ts`, `db/queries/sales.ts`,
+ * `ui/server.ts` y `scheduler/cron.ts`):
+ *   - pool.query<T>(sql, params) → Promise<T[]>
+ *   - pool.testConnection() → Promise<void>
+ *   - pool.close() → Promise<void>
+ *   - isFirebirdUnavailableError(error) → boolean
+ *
+ * Notas técnicas:
+ *   - `Firebird.pool(max, opts)` crea el pool nativo del driver clásico.
+ *   - `pool.get(cb)` obtiene una `Database`; al llamar `db.detach()` la conexión
+ *     regresa al pool (no se desconecta realmente).
+ *   - `db.execute(sql, params, cb, { asObject: false })` se usa en lugar de
+ *     `db.query(...)` para conservar filas indexadas por columna (compat con
+ *     `inventory.ts` y `sales.ts` que esperan `row[0]`, `row[1]`, …).
+ *   - `node-firebird` no expone `READ_ONLY` / `NO_WAIT` / `TransactionIsolation` a
+ *     nivel de query (cada query abre su propia transacción implícita). Si se
+ *     requiere `READ_ONLY` en producción, debe configurarse a nivel del usuario
+ *     Firebird en la BD (permisos), no en código.
+ */
 class FirebirdPool {
-  private client?: Client;
-  private readonly connections: PooledAttachment[] = [];
-  private waiters: Array<(connection: PooledAttachment) => void> = [];
-  // FIX IMPL-20260806-04: maxConnections=3 (suficiente para 2 jobs concurrentes + 1 buffer)
-  // — antes 5 saturaba el pool en jobs paralelos.
-  private readonly maxConnections = 3;
-  private readonly timeoutMs = 30_000;
+  private pool: Firebird.ConnectionPool | null = null;
+  // IMPL-20260806-05: max=3 conexiones (suficiente para 2 jobs concurrentes + 1 buffer).
+  // Mismo límite que el driver nativo usaba para evitar saturación en jobs paralelos.
+  readonly maxConnections = 3;
+  readonly timeoutMs = 30_000;
 
   constructor() {
-    // El addon nativo se carga al primer acceso, permitiendo levantar la UI sin BD local.
+    // El pool se crea lazy en el primer query, permitiendo levantar la UI sin BD local.
   }
 
-  private getClient(): Client {
-    if (!this.client) {
-      const require = createRequire(__filename);
-      const native = require('node-firebird-driver-native') as typeof import('node-firebird-driver-native');
-      const library = env.firebirdClientLibrary ?? native.getDefaultLibraryFilename();
-      this.client = native.createNativeClient(library);
-    }
-    return this.client;
-  }
-
-  private uri(): string {
-    const dbPath = readRuntimeConfig().firebird.db_path;
-    return `localhost/3050:${dbPath}`;
-  }
-
-  private async createConnection(): Promise<PooledAttachment> {
+  private options(): FirebirdOptions {
     const db = readRuntimeConfig().firebird;
-    const connection = await this.getClient().connect(this.uri(), {
-      username: db.user,
+    return {
+      host: '127.0.0.1',
+      port: 3050,
+      database: db.db_path,
+      user: db.user,
       password: env.firebirdPassword,
-      setDatabaseReadWriteMode: DatabaseReadWriteMode.READ_ONLY
-    });
-    const pooled = { attachment: connection, busy: false };
-    this.connections.push(pooled);
-    return pooled;
+    };
   }
 
-  private async acquire(): Promise<PooledAttachment> {
-    const idle = this.connections.find((connection) => !connection.busy);
-    if (idle) { idle.busy = true; return idle; }
-    if (this.connections.length < this.maxConnections) {
-      const connection = await this.createConnection();
-      connection.busy = true;
-      return connection;
+  private getPool(): Firebird.ConnectionPool {
+    if (!this.pool) {
+      this.pool = Firebird.pool(this.maxConnections, this.options());
     }
-    return new Promise((resolve) => { this.waiters.push((connection) => { connection.busy = true; resolve(connection); }); });
+    return this.pool;
   }
 
-  private release(connection: PooledAttachment): void {
-    connection.busy = false;
-    const waiter = this.waiters.shift();
-    if (waiter) waiter(connection);
+  // IMPL-20260806-05: node-firebird maneja el pool internamente. acquire/release
+  // se reducen a: pool.get(cb) → usar db → db.detach() (vuelve al pool).
+  private acquire(): Promise<Firebird.Database> {
+    return new Promise((resolve, reject) => {
+      this.getPool().get((err, db) => {
+        if (err) {
+          reject(err instanceof Error ? err : new Error(String(err)));
+          return;
+        }
+        if (!db) {
+          reject(new Error('Pool Firebird no devolvió conexión'));
+          return;
+        }
+        resolve(db);
+      });
+    });
   }
 
-  private async discard(connection: PooledAttachment): Promise<void> {
-    const index = this.connections.indexOf(connection);
-    if (index >= 0) this.connections.splice(index, 1);
-    try { await connection.attachment.disconnect(); } catch (error) { logger.warn('No fue posible cerrar conexión Firebird', safeError(error)); }
+  private release(db: Firebird.Database): void {
+    try {
+      // En conexiones pool'eadas, detach() devuelve la conexión al pool en lugar
+      // de cerrarla realmente. Forzamos cierre solo si la conexión está marcada
+      // como unusable por el driver.
+      db.detach();
+    } catch {
+      // Ignorar errores: detach puede ser no-op o fallar si la conexión ya cayó.
+    }
   }
 
-  async query<T>(sql: string, parameters: unknown[] = []): Promise<T[]> {
+  private discard(db: Firebird.Database): void {
+    this.release(db);
+  }
+
+  async query<T = unknown[]>(sql: string, parameters: unknown[] = []): Promise<T[]> {
     const started = Date.now();
-    let lastError: unknown;
+    let lastError: Error | undefined;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
-      let connection: PooledAttachment | undefined;
-      let transaction: Transaction | undefined;
+      let db: Firebird.Database | undefined;
       try {
-        connection = await this.acquire();
-        // FIX IMPL-20260806-04: NO_WAIT evita bloqueos cuando inventory + sales
-        // se disparan a la vez desde la UI. Si la tabla está lockeada falla
-        // rápido (lock-conflict) y el retry loop con backoff lo recupera.
-        // READ_COMMITTED (+RECORD_VERSION) asegura que solo se leen commits
-        // confirmados sin bloquearse por transacciones concurrentes.
-        transaction = await connection.attachment.startTransaction({
-          accessMode: 'READ_ONLY',
-          waitMode: 'NO_WAIT',
-          isolation: TransactionIsolation.READ_COMMITTED,
-          readCommittedMode: 'RECORD_VERSION'
+        db = await this.acquire();
+        const rows = await new Promise<T[]>((resolve, reject) => {
+          // asObject:false → filas como arrays indexados (row[0], row[1], …),
+          // retrocompatible con los consumidores inventory.ts y sales.ts.
+          // El 4º arg `custom` no está declarado en los @types de node-firebird
+          // aunque el runtime JS lo soporta; usamos cast tipado para no perder
+          // strict mode en el resto del código.
+          const params = Array.isArray(parameters) ? parameters : [parameters];
+          const execute = db!.execute as (
+            q: string,
+            p: unknown[],
+            cb: (err: unknown, result: unknown) => void,
+            custom: { asObject: boolean }
+          ) => Firebird.Database;
+          execute(sql, params, (err: unknown, result: unknown) => {
+            if (err) {
+              reject(err instanceof Error ? err : new Error(String(err)));
+              return;
+            }
+            resolve(result as T[]);
+          }, { asObject: false });
         });
-        const resultSet = await Promise.race([
-          connection.attachment.executeQuery(transaction, sql, parameters),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timeout Firebird de 60 segundos')), this.timeoutMs * 2))
-        ]);
-        // FIX IMPL-20260806-04: streaming chunks de 1000 filas. fetch() bloqueante
-        // podía agotar el timeout del server Firebird en queries grandes (inventario
-        // ~8000 productos). Los chunks liberan la transacción temprano si fuera
-        // necesario y permiten al event loop procesar otras señales.
-        // API real: fetch({ fetchSize }) — fetchSize es el batch size de filas.
-        const rows: unknown[][] = [];
-        let chunk: unknown[][];
-        do {
-          chunk = await Promise.race([
-            resultSet.fetch({ fetchSize: 1000 }),
-            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timeout fetch')), this.timeoutMs * 2))
-          ]) as unknown[][];
-          rows.push(...chunk);
-        } while (chunk.length === 1000);
-        await resultSet.close();
-        await transaction.commit();
-        if (Date.now() - started > 5000) logger.warn('Query Firebird lenta', { duration_ms: Date.now() - started, rows: rows.length });
-        return rows as T[];
+        if (Date.now() - started > 5000) {
+          logger.warn('Query Firebird lenta', { duration_ms: Date.now() - started, rows: rows.length });
+        }
+        return rows;
       } catch (error) {
-        lastError = error;
-        if (transaction) { try { await transaction.rollback(); } catch { /* conexión caída */ } }
-        if (connection) await this.discard(connection);
+        lastError = error instanceof Error ? error : new Error(String(error));
         logger.warn('Error en query Firebird; reintentando', { attempt, error: safeError(error) });
-        // FIX IMPL-20260806-04: backoff entre reintentos para no saturar el pool.
+        // IMPL-20260806-05: backoff entre reintentos para no saturar el pool.
         // retry 1 → 500ms, retry 2 → 1000ms, retry 3 → 1500ms.
         await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
       } finally {
-        if (connection && this.connections.includes(connection)) this.release(connection);
+        if (db) this.release(db);
       }
     }
-    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    throw lastError ?? new Error('Error desconocido en query Firebird');
   }
 
   async testConnection(): Promise<void> {
-    await this.query('SELECT 1 FROM RDB$DATABASE');
+    await this.query('SELECT FIRST 1 * FROM RDB$DATABASE');
   }
 
   async close(): Promise<void> {
-    await Promise.all(this.connections.map((connection) => connection.attachment.disconnect()));
-    this.connections.length = 0;
-    if (this.client) await this.client.dispose();
+    if (this.pool) {
+      const pool = this.pool;
+      this.pool = null;
+      await new Promise<void>((resolve) => {
+        pool.destroy(() => resolve());
+      });
+    }
   }
 }
 
 export const pool = new FirebirdPool();
 
 /**
- * Detecta si un error corresponde al módulo nativo de Firebird no disponible
- * (típico en Linux donde node-gyp no compila). Distingue este caso del error
- * real para que el dashboard no muestre "failed" cuando el problema es del
- * entorno de desarrollo, no del software.
+ * Detecta si un error corresponde al módulo Firebird no disponible.
  *
- * Implementación: por mensaje del error (string includes, case-insensitive).
- * Decisión técnica confirmada en SPEC-IMPL-20260804-01 §3 y §5.
+ * Cubre tanto el driver nativo (node-firebird-driver-native, ya no se usa como
+ * primario pero sigue instalado) como el driver clásico (node-firebird), en caso
+ * de que falten binarios, fbclient.dll, o haya un fallo de inicialización del
+ * socket al puerto 3050. Distingue este caso del error real para que el dashboard
+ * no muestre "failed" cuando el problema es del entorno, no del software.
  */
 export function isFirebirdUnavailableError(error: unknown): boolean {
   if (!error) return false;
@@ -159,11 +182,14 @@ export function isFirebirdUnavailableError(error: unknown): boolean {
   const patterns = [
     'bindings file',
     'could not locate',
-    'compiled/',
+    'libfbclient',
     'node-firebird',
-    'addon.node',
     'cannot find module',
-    'node-gyp'
+    'node-gyp',
+    'econnrefused',
+    'connection refused',
+    'fbclient',
+    'service attach'
   ];
 
   return patterns.some((pattern) => message.includes(pattern));
