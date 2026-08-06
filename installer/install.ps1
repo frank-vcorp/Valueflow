@@ -208,7 +208,6 @@ if (-not $SourceMiddleware) {
         pause
         exit 4
     }
-}
 
 Write-Host ('  Origen: ' + $SourceMiddleware)
 Write-Host ('  Destino: ' + $InstallDir)

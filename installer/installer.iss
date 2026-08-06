@@ -6,14 +6,14 @@
 ; ============================================
 
 #define MyAppName "Valueflow Middleware"
-#define MyAppVersion "1.0"
+#define MyAppVersion "1.3.1"
 #define MyAppPublisher "VCorp - Representaciones Aga de Saltillo"
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-AppVerName={#MyAppName} v{#MyAppVersion}
+AppVerName={#MyAppName} v1.3.1 (build 2026-08-06)
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\siemens-middleware
 DefaultGroupName={#MyAppName}
@@ -27,7 +27,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Valueflow Middleware Installer
-OutputBaseFilename=Valueflow-Setup-v{#MyAppVersion}
+OutputBaseFilename=Valueflow-Setup-v1.3.1
 OutputDir=build_output
 
 [Languages]
