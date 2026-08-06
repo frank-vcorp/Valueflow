@@ -341,20 +341,38 @@ try {
         throw 'No se encontro node.exe para generar hash bcrypt'
     }
 
-    # Usar archivo temporal para evitar escape issues
+    # FIX-20260806-02: el script JS NO puede ir inline con 'node -e': el passing
+    # legado de PS 5.1 no escapa las comillas dobles y CommandLineToArgvW las
+    # consume => node evalua require(fs) => ReferenceError (stderr: [eval]:1).
+    # Fix: el script va a un archivo (su contenido jamas pasa por argv).
     $passwordFile = Join-Path $env:TEMP 'valueflow_bcrypt_input.txt'
-    Set-Content -Path $passwordFile -Value $UIPasswordPlain -NoNewline -Encoding UTF8
+    # WriteAllText = UTF8 sin BOM y sin newline final, identico en PS 5.1 y 7
+    [System.IO.File]::WriteAllText($passwordFile, $UIPasswordPlain)
 
-    # Node.js script que lee el password del archivo y genera hash
-    $nodeScript = 'const fs=require("fs");const b=require("bcryptjs");const p=fs.readFileSync(process.argv[1],"utf8").trim();console.log(b.hashSync(p,12));'
-    # FIX-20260806-01: 2>&1 envuelve stderr en ErrorRecord; validar tipo antes de Trim()
-    $bcryptRaw = & $nodeExe -e $nodeScript $passwordFile 2>&1
+    # Fail-fast si npm install (paso 6) no se completo
+    if (-not (Test-Path (Join-Path $InstallDir 'node_modules\bcryptjs\package.json'))) {
+        throw 'bcryptjs ausente en node_modules: npm install --production no se completo. Revise conectividad y re-ejecute el instalador.'
+    }
+
+    # El archivo JS debe vivir en $InstallDir para que require('bcryptjs')
+    # resuelva desde $InstallDir\node_modules (resolucion relativa al script).
+    $jsFile = Join-Path $InstallDir 'valueflow_bcrypt_gen.js'
+    # OJO: con 'node archivo.js ARG', el primer arg real es process.argv[2]
+    # (argv[1] es el script; con 'node -e ARG' era argv[1])
+    $jsCode = 'const fs=require("fs");const b=require("bcryptjs");const p=fs.readFileSync(process.argv[2],"utf8").trim();console.log(b.hashSync(p,12));'
+    [System.IO.File]::WriteAllText($jsFile, $jsCode)
+
+    $bcryptRaw = & $nodeExe $jsFile $passwordFile 2>&1
+    $exitCode = $LASTEXITCODE
     $errLines = @($bcryptRaw | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
     $bcryptHash = (($bcryptRaw | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Out-String).Trim()
-    if ($bcryptHash -eq '' -and $errLines.Count -gt 0) {
-        throw ('Node.js error: ' + $errLines[0].Exception.Message)
+    Remove-Item $passwordFile, $jsFile -Force -ErrorAction SilentlyContinue
+    # FIX-20260806-02: reportar TODO stderr + exit code; antes solo la primera
+    # linea, que en errores de node -e es siempre el header '[eval]:1'
+    if ($bcryptHash -eq '' -or $exitCode -ne 0) {
+        $errMsg = ($errLines | ForEach-Object { $_.Exception.Message }) -join ' '
+        throw ('Node.js error (exit ' + $exitCode + '): ' + $errMsg)
     }
-    Remove-Item $passwordFile -Force -ErrorAction SilentlyContinue
 
     if ($bcryptHash -notmatch '^\$2[ayb]\$') {
         throw ('Hash bcrypt invalido generado: ' + $bcryptHash)
