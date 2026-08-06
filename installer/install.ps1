@@ -143,26 +143,19 @@ if ([int]$nodeMajor -lt 20) {
     Write-Warn "Se recomienda Node.js 20 LTS. Actual: $nodeVersion. La instalacion continuara pero pueden haber problemas."
 }
 
-# ===== 3. Leer credenciales del archivo temporal =====
-Write-Step "Leyendo credenciales..."
+# ===== 3. Leer ruta del .FDB del archivo temporal =====
+Write-Step "Leyendo ruta de la base de datos..."
 $ConfigFile = Join-Path $env:TEMP "valueflow_install_config.ini"
 if (Test-Path $ConfigFile) {
-    Write-OK "Credenciales recibidas del wizard del instalador"
     $IniContent = Get-Content $ConfigFile -Raw
     $FirebirdDBPath = if ($IniContent -match "FIREBIRD_DB_PATH=(.+)") { $matches[1].Trim() } else { "" }
-    $SiemensAPIKey = if ($IniContent -match "SIEMENS_API_KEY=(.+)") { $matches[1].Trim() } else { "" }
-    $UIPasswordPlain = if ($IniContent -match "UI_PASSWORD=(.+)") { $matches[1].Trim() } else { "" }
     Remove-Item $ConfigFile -Force -ErrorAction SilentlyContinue
 } else {
     Write-Warn "No se encontro archivo de credenciales (ejecutado sin Inno Setup)"
-    Write-Host "  Ingrese los parametros manualmente:"
     $FirebirdDBPath = Read-Host "  Ruta del archivo .FDB de Aspel SAE"
-    $SiemensAPIKey = Read-Host "  API Key de Siemens PoSi"
-    $UIPasswordPlain = Read-Host "  Contrasena para la UI web (min 8 caracteres)" -AsSecureString
-    $UIPasswordPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($UIPasswordPlain))
 }
 
-# Validar credenciales
+# Validar ruta de BD
 if ($FirebirdDBPath -eq "" -or !(Test-Path $FirebirdDBPath)) {
     Write-Err "Ruta de BD no valida: '$FirebirdDBPath'"
     Write-Host "  Verifique que el archivo .FDB existe en esa ubicacion" -ForegroundColor Yellow
@@ -171,19 +164,12 @@ if ($FirebirdDBPath -eq "" -or !(Test-Path $FirebirdDBPath)) {
 }
 Write-OK "BD Aspel encontrada: $FirebirdDBPath"
 
-if ($SiemensAPIKey -eq "" -or $SiemensAPIKey.Length -lt 32) {
-    Write-Err "API Key invalida (debe tener minimo 32 caracteres)"
-    pause
-    exit 3
-}
-Write-OK "API Key Siemens recibida (longitud: $($SiemensAPIKey.Length))"
-
-if ($UIPasswordPlain -eq "" -or $UIPasswordPlain.Length -lt 8) {
-    Write-Err "Contrasena UI muy corta (minimo 8 caracteres)"
-    pause
-    exit 3
-}
-Write-OK "Contrasena UI recibida (longitud: $($UIPasswordPlain.Length))"
+# CREDENCIALES PRECONFIGURADAS (cambiar despues desde UI)
+$SiemensAPIKey = "I1kLfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv"   # QUA sandbox (cambiar desde UI para produccion)
+$UIPasswordPlain = "Admin123"                                       # Default UI password (cambiar desde UI)
+$UIUsername = "Admin"                                                # Default UI username
+Write-OK "API Key Siemens QUA preconfigurada (cambiar a produccion desde UI)"
+Write-OK "Credenciales UI preconfiguradas: $UIUsername / $UIPasswordPlain (cambiar desde UI)"
 
 # ===== 4. Crear directorio de instalacion =====
 Write-Step "Creando directorio: $InstallDir"
@@ -231,7 +217,7 @@ $envContent = @"
 FIREBIRD_PASSWORD=masterkey
 SIEMENS_API_KEY=$SiemensAPIKey
 UI_PORT=$UIPort
-UI_USERNAME=admin
+UI_USERNAME=$UIUsername
 LOG_LEVEL=info
 LOG_DIR=logs
 "@
@@ -332,12 +318,25 @@ try {
 Write-Step "Creando acceso directo al escritorio..."
 $shell = New-Object -ComObject WScript.Shell
 $desktop = [System.Environment]::GetFolderPath("Desktop")
+
+# Copiar icono .ico desde el bundle a la carpeta de instalacion
+$iconSource = Join-Path $PSScriptRoot "..\assets\valueflow-icon.ico"
+$iconDest = Join-Path $InstallDir "valueflow-icon.ico"
+if (Test-Path $iconSource) {
+    Copy-Item -Path $iconSource -Destination $iconDest -Force
+} else {
+    Write-Warn "No se encontro $iconSource, usando icono default"
+    $iconDest = "shell32.dll,1"  # Icono default de Windows
+}
+
 $shortcut = $shell.CreateShortcut("$desktop\Valueflow Middleware.lnk")
-$shortcut.TargetPath = "https://localhost:$UIPort"
+$shortcut.TargetPath = "http://localhost:$UIPort/"
 $shortcut.WorkingDirectory = $InstallDir
-$shortcut.IconLocation = Join-Path $InstallDir "public\logo_aga_letras_2.png"
+$shortcut.IconLocation = $iconDest
+$shortcut.Description = "Valueflow Middleware - Aspel SAE <-> Siemens PoSi"
+$shortcut.WindowStyle = 1  # Normal window
 $shortcut.Save()
-Write-OK "Acceso directo creado"
+Write-OK "Acceso directo creado con icono personalizado"
 
 # ===== 12. Verificacion final =====
 Write-Step "Verificando instalacion..."

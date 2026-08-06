@@ -45,9 +45,15 @@ Source: "..\middleware\*"; DestDir: "{app}\middleware"; Flags: ignoreversion rec
 Source: "install.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "install.bat"; DestDir: "{app}\installer"; Flags: ignoreversion
 
+; Node.js 20 LTS portable (NO requiere instalacion MSI; viene incluido)
+Source: "assets\node-v20.14.0-win-x64.zip"; DestDir: "{app}\node-portable"; Flags: ignoreversion
+
 ; Assets (logos)
 Source: "..\middleware\public\logo_aga_letras_2.png"; DestDir: "{app}\middleware\public"; Flags: ignoreversion
 Source: "..\middleware\public\partner.png"; DestDir: "{app}\middleware\public"; Flags: ignoreversion
+
+; Icono para acceso directo en escritorio
+Source: "assets\valueflow-icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Documentos (manual de usuario)
 Source: "..\middleware\MANUAL_OPERACION.md"; DestDir: "{app}\docs"; Flags: ignoreversion
@@ -80,62 +86,33 @@ Filename: "pm2"; Parameters: "delete siemens-middleware"; Flags: runhidden
 
 var
   FirebirdDBPathPage: TInputFileWizardPage;
-  FirebirdDBPathValue: String;
-  SiemensAPIKeyValue: String;
-  UIPasswordValue: String;
 
 procedure InitializeWizard;
 begin
-  { Pagina personalizada con 3 campos para el wizard }
+  { Wizard simplificado: SOLO pide la ruta del archivo .FDB de Aspel }
+  { Las credenciales (user, password, API key) tienen defaults preconfigurados }
+  { que el usuario puede cambiar despues desde la UI o editando el .env }
   FirebirdDBPathPage := CreateInputFilePage(
     wpSelectDir,
-    'Configuracion del Middleware',
-    'Parametros de conexion',
-    'Ingrese los parametros para conectar el middleware a Aspel SAE y Siemens PoSi:' + #13#10 +
-    '- Ruta del archivo .FDB de Aspel SAE' + #13#10 +
-    '- API Key de Siemens PoSi (sandbox QUA por defecto)' + #13#10 +
-    '- Contrasena para la interfaz web de administracion'
+    'Ubicacion de la base de datos de Aspel SAE',
+    'Seleccionar archivo .FDB',
+    'Seleccione el archivo .FDB de la base de datos de Aspel SAE 9.0 o 10.0:' + #13#10 +
+    '(Use el boton Examinar... para navegar)' + #13#10 + #13#10 +
+    'Credenciales preconfiguradas (cambie despues desde la UI):' + #13#10 +
+    '  Usuario: Admin' + #13#10 +
+    '  Contrasena: Admin123' + #13#10 +
+    '  API Key Siemens: sandbox QUA (cambiar a produccion desde UI)'
   );
 
-  { Campo 1: Ruta del archivo .FDB de Aspel SAE }
+  { UNICO campo: Ruta del archivo .FDB de Aspel SAE }
   FirebirdDBPathPage.Add(
-    'Ruta del archivo .FDB de Aspel SAE:',
+    'Ruta del archivo .FDB de Aspel SAE (use Examinar para navegar):',
     'Archivo .FDB|Asel SAE 9.0/10.0 (*.FDB)|*.FDB|Todos los archivos (*.*)|*.*',
     'C:\Program Files\Aspel\Aspel SAE 9.0\BD\SAE90EMPRE01.FDB'
   );
-
-  { Campo 2: API Key de Siemens (vacio por defecto; usuario pega la real) }
-  FirebirdDBPathPage.Add(
-    'API Key de Siemens PoSi (pegar su key; sandbox o productiva):',
-    'API Key (32+ caracteres)',
-    ''
-  );
-
-  { Campo 3: Password para la UI admin (minimo 8 caracteres) }
-  FirebirdDBPathPage.Add(
-    'Contrasena para la UI web (minimo 8 caracteres):',
-    'Contrasena (texto plano)',
-    ''
-  );
 end;
 
-{ Capturar valores de los campos del wizard }
-function GetFirebirdDBPath(Param: String): String;
-begin
-  Result := FirebirdDBPathPage.Values[0];
-end;
-
-function GetSiemensAPIKey(Param: String): String;
-begin
-  Result := FirebirdDBPathPage.Values[1];
-end;
-
-function GetUIPasswordPlain(Param: String): String;
-begin
-  Result := FirebirdDBPathPage.Values[2];
-end;
-
-{ Guardar valores en archivo temporal que install.bat leera }
+{ Guardar solo la ruta del FDB en archivo temporal que install.bat leera }
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ConfigFile: String;
@@ -145,9 +122,7 @@ begin
   begin
     ConfigFile := ExpandConstant('{tmp}\valueflow_install_config.ini');
     ConfigContent :=
-      'FIREBIRD_DB_PATH=' + FirebirdDBPathPage.Values[0] + #13#10 +
-      'SIEMENS_API_KEY=' + FirebirdDBPathPage.Values[1] + #13#10 +
-      'UI_PASSWORD=' + FirebirdDBPathPage.Values[2] + #13#10;
+      'FIREBIRD_DB_PATH=' + FirebirdDBPathPage.Values[0] + #13#10;
     SaveStringToFile(ConfigFile, ConfigContent, False);
   end;
 end;
