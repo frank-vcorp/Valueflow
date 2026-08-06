@@ -180,17 +180,71 @@ Write-OK "Directorio listo"
 
 # ===== 5. Copiar archivos del middleware desde bundle =====
 Write-Step "Copiando archivos del middleware..."
-$SourceMiddleware = Join-Path $PSScriptRoot "..\middleware"
-if (-not (Test-Path $SourceMiddleware)) {
-    Write-Err "No se encontro el codigo del middleware en: $SourceMiddleware"
-    Write-Host "  El bundle debe contener una carpeta 'middleware' junto a 'installer'." -ForegroundColor Yellow
+
+# Buscar la carpeta middleware en multiples paths posibles
+$SearchPaths = @(
+    (Join-Path $PSScriptRoot "..\middleware"),                    # installer/../middleware (bundle estandar)
+    (Join-Path $PSScriptRoot "..\..\middleware\dist\.."),         # installer/../../middleware (cuando se corre desde installer/)
+    (Join-Path $PSScriptRoot "..\dist\..\.."),                    # installer/../dist/../../middleware (variante)
+    (Join-Path $InstallDir "..\middleware"),                       # InstallDir/../middleware (caso directo)
+    "C:\Users\frank\Desktop\REPAGA\valueflow-middleware\middleware",  # Default comun para Ing. Paco
+    "C:\Temp\valueflow-middleware\middleware",                     # Posible extraccion reciente
+    "C:\apps\valueflow-middleware\middleware"                      # Si se reinstalo a otra ruta
+)
+
+$SourceMiddleware = $null
+foreach ($path in $SearchPaths) {
+    if ($path -and (Test-Path $path)) {
+        $pkgCheck = Join-Path $path "package.json"
+        $distCheck = Join-Path $path "dist"
+        if ((Test-Path $pkgCheck) -and (Test-Path $distCheck)) {
+            $SourceMiddleware = $path
+            break
+        }
+    }
+}
+
+if (-not $SourceMiddleware) {
+    Write-Err "No se encontro el codigo del middleware en ninguno de estos paths:"
+    foreach ($path in $SearchPaths) {
+        Write-Host "    - $path" -ForegroundColor Yellow
+    }
+    Write-Host ""
+    Write-Host "  OPCION MANUAL: indique la ruta donde esta el codigo del middleware:" -ForegroundColor Cyan
+    $SourceMiddleware = Read-Host "  Ruta del middleware"
+    if (-not (Test-Path "$SourceMiddleware\package.json")) {
+        Write-Err "El path $SourceMiddleware no contiene un middleware valido (falta package.json)"
+        pause
+        exit 4
+    }
+}
+
+Write-Host "  Origen: $SourceMiddleware"
+Write-Host "  Destino: $InstallDir"
+
+# Eliminar instalacion anterior si existe (pero NO node portable)
+if (Test-Path "$InstallDir\dist") {
+    Remove-Item "$InstallDir\dist" -Recurse -Force -ErrorAction SilentlyContinue
+}
+if (Test-Path "$InstallDir\src") {
+    Remove-Item "$InstallDir\src" -Recurse -Force -ErrorAction SilentlyContinue
+}
+if (Test-Path "$InstallDir\package.json") {
+    Remove-Item "$InstallDir\package.json" -Force -ErrorAction SilentlyContinue
+}
+if (Test-Path "$InstallDir\tsconfig.json") {
+    Remove-Item "$InstallDir\tsconfig.json" -Force -ErrorAction SilentlyContinue
+}
+
+Copy-Item -Path "$SourceMiddleware\*" -Destination $InstallDir -Recurse -Force -Exclude @("node_modules\.bin", "coverage", ".nyc_output", "*.log")
+
+# Verificar que la copia funciono
+if (-not (Test-Path "$InstallDir\package.json")) {
+    Write-Err "La copia fallo - no se encontro package.json en destino"
     pause
     exit 4
 }
-Write-Host "  Origen: $SourceMiddleware"
-Write-Host "  Destino: $InstallDir"
-Copy-Item -Path "$SourceMiddleware\*" -Destination $InstallDir -Recurse -Force -Exclude @("node_modules\.bin", "coverage", ".nyc_output", "*.log")
-Write-OK "Archivos copiados"
+Write-OK "Archivos copiados correctamente ($(Get-ChildItem $InstallDir -Recurse -File | Measure-Object).Count archivos)"
 
 # ===== 6. Instalar dependencias de produccion =====
 Write-Step "Instalando dependencias npm (puede tardar 3-5 min)..."
@@ -258,14 +312,31 @@ Write-OK "config.json configurado"
 Write-Host "  Generando hash bcrypt para contrasena UI..."
 try {
     Push-Location $InstallDir
-    $bcryptHash = node -e "const b = require('bcryptjs'); console.log(b.hashSync(process.argv[1], 12));" $UIPasswordPlain 2>&1
+    # Usar Node portable extraido (con PATH actualizado debe funcionar)
+    $nodeBin = "$env:ProgramFiles\nodejs\node.exe"
+    if (-not (Test-Path $nodeBin)) {
+        # Si no hay Node del sistema, usar el portable extraido
+        $nodeBin = Join-Path (Split-Path $InstallDir) "node\node-v20.14.0-win-x64\node.exe"
+    }
+    if (-not (Test-Path $nodeBin)) {
+        # Buscar el node.exe portable en el directorio de instalacion
+        $nodeBin = Get-ChildItem -Path $InstallDir -Recurse -Filter "node.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+    }
+    Write-Host "    Usando: $nodeBin"
+    $bcryptHash = & $nodeBin -e "const b = require('bcryptjs'); console.log(b.hashSync(process.argv[1], 12));" $UIPasswordPlain 2>&1
+    $bcryptHash = $bcryptHash.Trim()
     Pop-Location
+
+    if ($bcryptHash -notmatch '^\$2[ayb]\$') {
+        throw "Hash bcrypt invalido generado: $bcryptHash"
+    }
 
     # Leer .env actual y actualizar UI_PASSWORD_HASH
     $envContent = Get-Content $envPath -Raw
     $envContent = $envContent -replace "(?ms)^UI_PASSWORD_HASH=.*$", "UI_PASSWORD_HASH=$bcryptHash"
     Set-Content -Path $envPath -Value $envContent -Force
-    Write-OK "UI_PASSWORD_HASH generado"
+    Write-OK "UI_PASSWORD_HASH generado para password: $UIPasswordPlain"
+    Write-Host "    Hash: $bcryptHash" -ForegroundColor Gray
 } catch {
     Write-Warn "No se pudo hashear la contrasena: $_"
     Write-Host "  Puedes cambiarla despues desde la UI en /config" -ForegroundColor Yellow
@@ -314,19 +385,65 @@ try {
     Write-Warn "Error configurando PM2: $_"
 }
 
+# FALLBACK: Si el servicio PM2 no arranco correctamente, lanzar Node directo
+Start-Sleep -Seconds 3
+$nodeRunning = Get-Process node -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq "" } | Select-Object -First 1
+if (-not $nodeRunning) {
+    Write-Warn "PM2 no levanto el servicio. Arrancando Node directo como fallback..."
+
+    # Buscar Node portable
+    $portableNode = Join-Path (Split-Path $InstallDir) "node\node-v20.14.0-win-x64\node.exe"
+    if (-not (Test-Path $portableNode)) {
+        $portableNode = Get-ChildItem -Path (Split-Path $InstallDir) -Recurse -Filter "node.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+    }
+
+    if ($portableNode) {
+        Set-Location $InstallDir
+        # IMPORTANTE: usar Set-Location en lugar de -WorkingDirectory
+        # porque PowerShell interpreta los backslashes en param strings
+        Start-Process -FilePath $portableNode -ArgumentList "dist/index.js" -WindowStyle Hidden
+
+        Start-Sleep -Seconds 5
+
+        $nodeRunning = Get-Process node -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($nodeRunning) {
+            Write-OK "Middleware arrancado via Node directo (PID: $($nodeRunning.Id))"
+        } else {
+            Write-Err "Fallo al arrancar el middleware via Node directo"
+        }
+    } else {
+        Write-Err "No se encontro node.exe portable para arrancar como fallback"
+    }
+}
+
 # ===== 11. Crear acceso directo en escritorio =====
 Write-Step "Creando acceso directo al escritorio..."
 $shell = New-Object -ComObject WScript.Shell
 $desktop = [System.Environment]::GetFolderPath("Desktop")
 
-# Copiar icono .ico desde el bundle a la carpeta de instalacion
-$iconSource = Join-Path $PSScriptRoot "..\assets\valueflow-icon.ico"
+# Buscar el icono .ico en varios paths posibles (bundle + instalacion previa)
+$iconCandidates = @(
+    (Join-Path $PSScriptRoot "..\assets\valueflow-icon.ico"),
+    (Join-Path $PSScriptRoot "..\middleware\valueflow-icon.ico"),
+    (Join-Path $InstallDir "valueflow-icon.ico")
+)
+$iconSource = $null
+foreach ($candidate in $iconCandidates) {
+    if (Test-Path $candidate) {
+        $iconSource = $candidate
+        break
+    }
+}
+
 $iconDest = Join-Path $InstallDir "valueflow-icon.ico"
-if (Test-Path $iconSource) {
-    Copy-Item -Path $iconSource -Destination $iconDest -Force
+if ($iconSource) {
+    if ($iconSource -ne $iconDest) {
+        Copy-Item -Path $iconSource -Destination $iconDest -Force -ErrorAction SilentlyContinue
+    }
+    Write-OK "Icono personalizado: $iconDest"
 } else {
-    Write-Warn "No se encontro $iconSource, usando icono default"
-    $iconDest = "shell32.dll,1"  # Icono default de Windows
+    Write-Warn "No se encontro valueflow-icon.ico en el bundle, usando icono default de Windows"
+    $iconDest = "shell32.dll,13"  # Icono de shield/red de Windows
 }
 
 $shortcut = $shell.CreateShortcut("$desktop\Valueflow Middleware.lnk")
