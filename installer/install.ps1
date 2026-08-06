@@ -171,14 +171,15 @@ Write-OK 'Directorio listo'
 # ===== 5. Copiar archivos del middleware =====
 Write-Step 'Copiando archivos del middleware...'
 
-# Buscar la carpeta middleware en multiples paths posibles
+# FIX-20260806-01: $InstallDir\middleware va PRIMERO para que el bundle nuevo gane
+# sobre instaladores viejos residuales en $PSScriptRoot\..\middleware
 $SearchPaths = @(
+    (Join-Path $InstallDir 'middleware'),
     (Join-Path $PSScriptRoot '..\middleware'),
     (Join-Path $PSScriptRoot '..\..\middleware'),
     'C:\Users\frank\Desktop\REPAGA\valueflow-middleware\middleware',
     'C:\Temp\valueflow-middleware\middleware',
-    'C:\apps\valueflow-middleware\middleware',
-    (Join-Path $InstallDir 'middleware')
+    'C:\apps\valueflow-middleware\middleware'
 )
 
 $SourceMiddleware = $null
@@ -187,8 +188,11 @@ foreach ($path in $SearchPaths) {
         $pkgCheck = Join-Path $path 'package.json'
         $distCheck = Join-Path $path 'dist'
         if ((Test-Path $pkgCheck) -and (Test-Path $distCheck)) {
-            $SourceMiddleware = $path
-            break
+            $pkgContent = Get-Content $pkgCheck -Raw
+            if ($pkgContent -match '"name"\s*:\s*"repaga-siemens-middleware"') {
+                $SourceMiddleware = $path
+                break
+            }
         }
     }
 }
@@ -212,9 +216,10 @@ if (-not $SourceMiddleware) {
 Write-Host ('  Origen: ' + $SourceMiddleware)
 Write-Host ('  Destino: ' + $InstallDir)
 
-# Eliminar instalacion anterior si existe (solo el codigo, no el node portable)
-if (Test-Path (Join-Path $InstallDir 'middleware\package.json')) {
-    Remove-Item (Join-Path $InstallDir 'middleware') -Recurse -Force -ErrorAction SilentlyContinue
+# FIX-20260806-01: no borrar si el origen == destino (auto-delete rompe la copia)
+$legacyMiddlewareDir = Join-Path $InstallDir 'middleware'
+if ((Test-Path (Join-Path $legacyMiddlewareDir 'package.json')) -and ((Resolve-Path $legacyMiddlewareDir).Path -ne (Resolve-Path $SourceMiddleware).Path)) {
+    Remove-Item $legacyMiddlewareDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Copy-Item -Path (Join-Path $SourceMiddleware '*') -Destination $InstallDir -Recurse -Force `
@@ -342,8 +347,13 @@ try {
 
     # Node.js script que lee el password del archivo y genera hash
     $nodeScript = 'const fs=require("fs");const b=require("bcryptjs");const p=fs.readFileSync(process.argv[1],"utf8").trim();console.log(b.hashSync(p,12));'
-    $bcryptHash = & $nodeExe -e $nodeScript $passwordFile 2>&1
-    $bcryptHash = $bcryptHash.Trim()
+    # FIX-20260806-01: 2>&1 envuelve stderr en ErrorRecord; validar tipo antes de Trim()
+    $bcryptRaw = & $nodeExe -e $nodeScript $passwordFile 2>&1
+    $errLines = @($bcryptRaw | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+    $bcryptHash = (($bcryptRaw | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Out-String).Trim()
+    if ($bcryptHash -eq '' -and $errLines.Count -gt 0) {
+        throw ('Node.js error: ' + $errLines[0].Exception.Message)
+    }
     Remove-Item $passwordFile -Force -ErrorAction SilentlyContinue
 
     if ($bcryptHash -notmatch '^\$2[ayb]\$') {
@@ -352,9 +362,13 @@ try {
 
     Pop-Location
 
-    # Agregar hash al .env (sin escape de $ en PowerShell con backtick)
+    # FIX-20260806-01: persistir SIEMPRE UI_PASSWORD_HASH (replacement previo era no-op)
+    # Append explicito (no -replace) evita corrupcion por $ en valor bcrypt ($2a$12$...)
     $envContent = Get-Content $envPath -Raw
-    $envContent = $envContent -replace '(?ms)^UI_PASSWORD_HASH=.*$', ('UI_PASSWORD_HASH=' + $bcryptHash)
+    if ($envContent -match '(?m)^UI_PASSWORD_HASH=') {
+        $envContent = $envContent -replace '(?ms)^UI_PASSWORD_HASH=.*\r?\n', ''
+    }
+    $envContent = $envContent.TrimEnd() + "`r`n" + 'UI_PASSWORD_HASH=' + $bcryptHash + "`r`n"
     Set-Content -Path $envPath -Value $envContent -Force
     Write-OK ('UI_PASSWORD_HASH generado para password: ' + $UIPasswordPlain)
     Write-Host ('    Hash: ' + $bcryptHash) -ForegroundColor Gray
@@ -378,20 +392,28 @@ if (-not (Test-Path $addonPath)) {
 
 # ===== 11. Instalar PM2 =====
 Write-Step 'Verificando PM2 (gestor de procesos)...'
-$pm2Exe = $null
 
-# Buscar PM2 instalado
-$pm2Locations = @(
-    "$env:APPDATA\npm\pm.cmd",
-    "$env:ProgramFiles\npmjs\pm.cmd",
-    "$env:APPDATA\Roaming\npm\pm.cmd"
-)
-foreach ($loc in $pm2Locations) {
-    if (Test-Path $loc) {
-        $pm2Exe = $loc
-        break
+# FIX-20260806-01: detectar SIEMPRE pm2.cmd (Start-Process no ejecuta .ps1)
+function Find-Pm2Cmd {
+    param([string]$NodeDir)
+    $candidates = @(
+        "$env:APPDATA\npm\pm2.cmd",
+        "$env:ProgramFiles\nodejs\pm2.cmd",
+        "$env:ProgramFiles\npmjs\pm2.cmd",
+        (Join-Path $NodeDir 'pm2.cmd')
+    )
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) { return $candidate }
     }
+    foreach ($dir in ($env:Path -split ';')) {
+        if ($dir -and (Test-Path (Join-Path $dir 'pm2.cmd'))) {
+            return (Join-Path $dir 'pm2.cmd')
+        }
+    }
+    return $null
 }
+
+$pm2Exe = Find-Pm2Cmd -NodeDir (Split-Path $nodeExe -Parent)
 
 if (-not $pm2Exe) {
     Write-Warn 'PM2 no detectado. Instalando globalmente...'
@@ -402,12 +424,9 @@ if (-not $pm2Exe) {
         $sysPath = [System.Environment]::GetEnvironmentVariable('Path', 'Machine')
         $userPath = [System.Environment]::GetEnvironmentVariable('Path', 'User')
         $env:Path = $sysPath + ';' + $userPath
-        $pm2Exe = Get-Command pm2 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
-        if ($pm2Exe) {
-            Write-OK 'PM2 instalado'
-        } else {
-            Write-Warn 'PM2 instalado pero no detectable. Continuando...'
-        }
+        # NUNCA Get-Command pm2: resuelve a pm2.ps1, que no es ejecutable
+        $pm2Exe = Find-Pm2Cmd -NodeDir (Split-Path $nodeExe -Parent)
+        if ($pm2Exe) { Write-OK 'PM2 instalado' } else { Write-Warn 'PM2 instalado pero no detectable. Continuando...' }
     } catch {
         Write-Warn ('Error instalando PM2: ' + $_)
     } finally {
@@ -425,9 +444,10 @@ try {
         Start-Process -FilePath $pm2Exe -ArgumentList 'start ecosystem.config.js --name siemens-middleware' -Wait -PassThru -NoNewWindow | Out-Null
         Start-Process -FilePath $pm2Exe -ArgumentList 'save' -Wait -PassThru -NoNewWindow | Out-Null
 
-        $pm2Startup = Get-Command pm2-startup -ErrorAction SilentlyContinue
-        if ($pm2Startup) {
-            Start-Process -FilePath $pm2Startup.Source -ArgumentList 'install' -Wait -PassThru -NoNewWindow | Out-Null
+        # FIX-20260806-01: evitar Get-Command pm2-startup (resuelve a .ps1)
+        $pm2StartupCmd = Join-Path (Split-Path $pm2Exe -Parent) 'pm2-startup.cmd'
+        if (Test-Path $pm2StartupCmd) {
+            Start-Process -FilePath $pm2StartupCmd -ArgumentList 'install' -Wait -PassThru -NoNewWindow | Out-Null
             Write-OK 'Servicio Windows instalado (auto-arranque habilitado)'
         } else {
             Write-Warn 'pm2-startup no disponible - usando pm2 save'
