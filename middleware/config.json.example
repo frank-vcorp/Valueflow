@@ -1,7 +1,7 @@
 {
   "siemens": {
     "base_url": "https://api.pos.siemens.com",
-    "api_key": "",
+    "api_key": "env:SIEMENS_API_KEY",
     "environment": "QUA",
     "distributor_sender_id": "MX-REPRESENTACIONES"
   },

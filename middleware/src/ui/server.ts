@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import bcrypt from 'bcryptjs';
-import { env } from '../config/env';
+import { env, updateEnvVariable } from '../config/env';
 import { getConfigLastModified, getConfigPath, readRuntimeConfig, validateRuntimeConfig, writeRuntimeConfig, type RuntimeConfig } from '../config/runtime';
 import { maskApiKey, logger, safeError } from '../logger/winston';
 import { getExecutionHistory, runInventoryNow, runSalesNow } from '../scheduler/cron';
@@ -87,7 +87,8 @@ function createServer(): express.Express {
     const optionalSales = Object.entries(config.optional_fields.sales).map(([key, value]) => `<label><input type="checkbox" name="optional_sales_${escapeHtml(key)}" ${value ? 'checked' : ''}> ${escapeHtml(key)}</label>`).join('');
     const fields = `<div class="grid md:grid-cols-2 gap-4"><label>Base URL<input name="base_url" value="${escapeHtml(config.siemens.base_url)}" class="border rounded px-3 py-2 w-full"></label><label>Ambiente<input name="environment" value="${escapeHtml(config.siemens.environment)}" class="border rounded px-3 py-2 w-full"></label><label>Sender ID<input name="distributor_sender_id" value="${escapeHtml(config.siemens.distributor_sender_id)}" class="border rounded px-3 py-2 w-full"></label><label>Tamaño batch<input name="batch_size" type="number" min="1" max="3000" value="${config.batch_size}" class="border rounded px-3 py-2 w-full"></label></div><label class="block">Líneas Siemens (separadas por coma)<input name="lines" value="${escapeHtml(config.siemens_line_filter.lines.join(', '))}" class="border rounded px-3 py-2 w-full"></label><div class="grid md:grid-cols-2 gap-4"><label><input type="checkbox" name="inventory_enabled" ${config.schedules.inventory.enabled ? 'checked' : ''}> Inventario habilitado (${escapeHtml(config.schedules.inventory.cron)})</label><label><input type="checkbox" name="sales_enabled" ${config.schedules.sales.enabled ? 'checked' : ''}> Ventas habilitadas (${escapeHtml(config.schedules.sales.cron)})</label></div><fieldset><legend class="font-semibold">Campos opcionales inventario</legend><div class="grid md:grid-cols-3 gap-2">${optionalInventory}</div></fieldset><fieldset><legend class="font-semibold">Campos opcionales ventas</legend><div class="grid md:grid-cols-3 gap-2">${optionalSales}</div></fieldset>`;
     const modified = getConfigLastModified()?.toLocaleString('es-MX') ?? 'No creado; usando ejemplo';
-    res.send(render('config', { fields, keyPreview: escapeHtml(maskApiKey(config.siemens.api_key)), lastUpdated: escapeHtml(modified) }));
+    // La api_key ya no vive en config.json: se muestra el valor real desde env (enmascarado).
+    res.send(render('config', { fields, keyPreview: escapeHtml(maskApiKey(env.siemensApiKey || config.siemens.api_key)), lastUpdated: escapeHtml(modified) }));
   });
 
   app.get('/actions', (_req, res) => res.send(render('actions', { buttons: `<button hx-post="/api/actions/inventory" hx-target="#result" class="bg-blue-700 text-white rounded px-4 py-3">Ejecutar Inventario ahora</button><button hx-post="/api/actions/sales" hx-target="#result" class="bg-blue-700 text-white rounded px-4 py-3">Ejecutar Ventas ahora</button><button hx-post="/api/actions/test-siemens" hx-target="#result" class="bg-slate-700 text-white rounded px-4 py-3">Test conexión Siemens</button><button hx-post="/api/actions/test-sae" hx-target="#result" class="bg-slate-700 text-white rounded px-4 py-3">Test conexión SAE</button>` })));
@@ -95,9 +96,9 @@ function createServer(): express.Express {
     const files = fs.readdirSync(env.logDir).filter((file) => file.endsWith('.log') || file.endsWith('.gz')).map((file) => `<li>${escapeHtml(file)}</li>`).join('');
     res.send(render('logs', { files: files || '<li>Sin archivos de log todavía.</li>' }));
   });
-  app.get('/diagnostics', (_req, res) => res.send(render('diagnostics', { diagnostics: `<p>Node.js: ${escapeHtml(process.version)}</p><p>Driver: node-firebird-native-api mediante node-firebird-driver-native</p><p>BD configurada: ${escapeHtml(readRuntimeConfig().firebird.db_path)}</p><p>API Key: ${escapeHtml(maskApiKey(readRuntimeConfig().siemens.api_key))}</p><p>Config: ${escapeHtml(getConfigPath())}</p>` })));
+  app.get('/diagnostics', (_req, res) => res.send(render('diagnostics', { diagnostics: `<p>Node.js: ${escapeHtml(process.version)}</p><p>Driver: node-firebird-native-api mediante node-firebird-driver-native</p><p>BD configurada: ${escapeHtml(readRuntimeConfig().firebird.db_path)}</p><p>API Key: ${escapeHtml(maskApiKey(env.siemensApiKey || readRuntimeConfig().siemens.api_key))}</p><p>Config: ${escapeHtml(getConfigPath())}</p>` })));
 
-  app.get('/api/config', (_req, res) => { const config = readRuntimeConfig(); res.json({ ...config, siemens: { ...config.siemens, api_key: maskApiKey(config.siemens.api_key) } }); });
+  app.get('/api/config', (_req, res) => { const config = readRuntimeConfig(); res.json({ ...config, siemens: { ...config.siemens, api_key: maskApiKey(env.siemensApiKey || config.siemens.api_key) } }); });
   app.post('/api/config', (req, res) => {
     try {
       const current = readRuntimeConfig();
@@ -112,7 +113,10 @@ function createServer(): express.Express {
   app.post('/api/config/siemens-key', (req, res) => {
     const apiKey = String(req.body.api_key ?? '');
     if (apiKey.length < 32) { res.status(400).json({ error: 'API Key inválida (mínimo 32 caracteres)' }); return; }
-    const config = readRuntimeConfig(); config.siemens.api_key = apiKey; writeRuntimeConfig(config);
+    // La api_key se persiste en .env (NO en config.json) para evitar secretos en repo.
+    updateEnvVariable('SIEMENS_API_KEY', apiKey);
+    // Reflejar en process.env para que el siguiente envío la use sin reiniciar.
+    process.env.SIEMENS_API_KEY = apiKey;
     logger.info('API Key actualizada por usuario', { key_last4: apiKey.slice(-4), updated_by: res.locals.authUser });
     res.json({ success: true, key_preview: maskApiKey(apiKey), next_execution_will_use_new_key: true });
   });

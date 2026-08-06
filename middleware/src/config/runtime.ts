@@ -15,7 +15,10 @@ export interface ScheduleConfig {
 export interface RuntimeConfig {
   siemens: {
     base_url: string;
-    api_key: string;
+    // Marcador literal: la api_key real se lee en runtime desde
+    // process.env.SIEMENS_API_KEY (cargado por dotenv desde .env).
+    // Este campo NUNCA debe contener la clave real.
+    api_key: 'env:SIEMENS_API_KEY';
     environment: string;
     distributor_sender_id: string;
   };
@@ -64,9 +67,13 @@ export function validateRuntimeConfig(value: unknown): asserts value is RuntimeC
   const schedules = value.schedules;
   const retry = value.retry_policy;
   const filter = value.siemens_line_filter;
-  if (typeof siemens.base_url !== 'string' || typeof siemens.api_key !== 'string' ||
+  if (typeof siemens.base_url !== 'string' ||
+      siemens.api_key !== 'env:SIEMENS_API_KEY' ||
       typeof siemens.environment !== 'string' || typeof siemens.distributor_sender_id !== 'string') {
-    throw new Error('Configuración Siemens inválida');
+    throw new Error(
+      'Configuración Siemens inválida: siemens.api_key debe ser exactamente el literal "env:SIEMENS_API_KEY". ' +
+      'El valor real debe estar en la variable de entorno SIEMENS_API_KEY (ver .env).'
+    );
   }
   if (typeof firebird.db_path !== 'string' || typeof firebird.user !== 'string' ||
       firebird.password_source !== 'env:FIREBIRD_PASSWORD') {

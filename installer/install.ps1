@@ -23,11 +23,70 @@ param(
     [string]$SourceDir = $PSScriptRoot,
     [string]$NodeVersion = "20.14.0",
     [int]$UIPort = 4567,
-    [string]$FirebirdDBPath = "C:\Program Files\Aspel\Aspel SAE 10.0\BD\SAE10.FDB",
-    [string]$FirebirdUser = "readonly_siemens",
+    [string]$FirebirdDBPath = "",
+    [string]$FirebirdUser = "SYSDBA",
     [string]$SiemensEnvironment = "qua",
-    [string]$DistributorSenderID = "MX-REPRESENTACIONES"
+    [string]$DistributorSenderID = "MX-REPRESENTACIONES",
+    # Si -Silent se especifica, el instalador NO hace Read-Host: usa las variables
+    # de entorno FIREBIRD_PASSWORD y UI_PASSWORD_PLAIN (o -UiPasswordPlain) si están
+    # definidas, o falla con error claro.
+    [switch]$Silent,
+    [string]$UiPasswordPlain = "",
+    [string]$FirebirdDBPathOverride = ""
 )
+
+# ===== Búsqueda automática de BD Aspel SAE =====
+# Busca SAE*.FDB en las rutas comunes donde Aspel instala SAE 9.0/10.0
+# (C:\Program Files\Aspel, C:\SAE, D:\Aspel) y en el directorio del instalador.
+# Devuelve la primera coincidencia o $null. Prioriza SAE9 (cliente actual) sobre SAE10.
+function Find-AspelDatabase {
+    param([string]$HintPath = "")
+    $candidates = @()
+    if ($HintPath -ne "") { $candidates += $HintPath }
+
+    $searchRoots = @(
+        "C:\Program Files\Aspel",
+        "C:\SAE",
+        "D:\Aspel",
+        (Join-Path $PSScriptRoot "..\middleware")
+    )
+    foreach ($root in $searchRoots) {
+        if (Test-Path $root) {
+            $found = Get-ChildItem -Path $root -Filter "SAE*.FDB" -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object @{Expression={ $_.Name -like "SAE9*" }; Descending=$true},
+                              @{Expression={ $_.FullName.Length }; Ascending=$true}
+            foreach ($f in $found) { $candidates += $f.FullName }
+        }
+    }
+
+    # Filtrar duplicados preservando orden
+    $seen = @{}
+    $ordered = @()
+    foreach ($c in $candidates) {
+        if (-not $seen.ContainsKey($c)) {
+            $seen[$c] = $true
+            $ordered += $c
+        }
+    }
+    return $ordered
+}
+
+# Si no se pasó -FirebirdDBPath explícito, autodetectar
+if ($FirebirdDBPath -eq "" -and $FirebirdDBPathOverride -ne "") {
+    $FirebirdDBPath = $FirebirdDBPathOverride
+}
+if ($FirebirdDBPath -eq "") {
+    $detected = Find-AspelDatabase
+    if ($detected.Count -gt 0) {
+        $FirebirdDBPath = $detected[0]
+        if ($detected.Count -gt 1) {
+            Write-Warn "Se encontraron $($detected.Count) BD Aspel. Usando la primera: $FirebirdDBPath"
+            foreach ($alt in $detected[1..($detected.Count - 1)]) { Write-Host "    Alternativa: $alt" -ForegroundColor Gray }
+        } else {
+            Write-Host "  BD Aspel detectada automáticamente: $FirebirdDBPath" -ForegroundColor Cyan
+        }
+    }
+}
 
 # ===== Configuración =====
 $ErrorActionPreference = "Stop"
@@ -192,31 +251,80 @@ Write-Step "Configurando variables de entorno y operativa..."
 New-Item -ItemType Directory -Path "$InstallDir\logs" -Force | Out-Null
 New-Item -ItemType Directory -Path "$InstallDir\public" -Force | Out-Null
 
-# Solicitar credenciales al usuario
-Write-Host "`n  Configuración de credenciales:" -ForegroundColor Cyan
+# Solicitar credenciales al usuario (modo interactivo) o usar vars de entorno (modo -Silent)
+if ($Silent) {
+    Write-Host "`n  Modo SILENT: leyendo credenciales de variables de entorno..." -ForegroundColor Cyan
+    $firebirdPasswordPlain = $env:FIREBIRD_PASSWORD
+    if (-not $firebirdPasswordPlain) {
+        Write-Err "FIREBIRD_PASSWORD no definida. En modo -Silent debe estar en el entorno."
+        exit 1
+    }
+    $uiPasswordPlain = if ($UiPasswordPlain -ne "") { $UiPasswordPlain } else { $env:UI_PASSWORD_PLAIN }
+    if (-not $uiPasswordPlain) {
+        Write-Err "UI_PASSWORD_PLAIN no definida (ni -UiPasswordPlain). En modo -Silent debe estar en el entorno."
+        exit 1
+    }
+    if ($uiPasswordPlain.Length -lt 8) {
+        Write-Err "UI_PASSWORD_PLAIN debe tener mínimo 8 caracteres."
+        exit 1
+    }
+} else {
+    Write-Host "`n  Configuración de credenciales:" -ForegroundColor Cyan
 
-# Password de Firebird
-$secureFirebirdPassword = Read-Host "  Password de Firebird (solo lectura)" -AsSecureString
-$firebirdPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureFirebirdPassword)
-)
+    # Password de Firebird
+    $secureFirebirdPassword = Read-Host "  Password de Firebird (solo lectura)" -AsSecureString
+    $firebirdPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureFirebirdPassword)
+    )
 
-# Password de UI
-$secureUIPassword = Read-Host "  Password para acceso a la UI (mín. 8 caracteres)" -AsSecureString
-$uiPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureUIPassword)
-)
+    # Password de UI
+    $secureUIPassword = Read-Host "  Password para acceso a la UI (mín. 8 caracteres)" -AsSecureString
+    $uiPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureUIPassword)
+    )
+}
+
+# Verificar BD detectada (si no se encontró, pedirla)
+if ($FirebirdDBPath -eq "") {
+    Write-Warn "No se detectó BD Aspel en rutas comunes (C:\Program Files\Aspel, C:\SAE, D:\Aspel)."
+    Write-Host "  Rutas intentadas:" -ForegroundColor Gray
+    foreach ($r in @("C:\Program Files\Aspel", "C:\SAE", "D:\Aspel", (Join-Path $PSScriptRoot "..\middleware"))) {
+        Write-Host "    - $r" -ForegroundColor Gray
+    }
+    if ($Silent) {
+        Write-Err "En modo -Silent debe especificar -FirebirdDBPathOverride."
+        exit 1
+    }
+    $manualPath = Read-Host "  Ruta completa al archivo .FDB de Aspel SAE (ej: C:\Aspel\SAE90EMPRE01.FDB)"
+    if (-not (Test-Path $manualPath)) {
+        Write-Err "El archivo '$manualPath' no existe. Abortando."
+        exit 1
+    }
+    $FirebirdDBPath = $manualPath
+}
 
 # Generar hash bcrypt para UI
 Write-Host "  Generando hash bcrypt para UI..."
 $bcryptHash = & node -e "console.log(require('bcryptjs').hashSync('$uiPasswordPlain', 12))"
 
 # Crear .env
+# En modo -Silent, si SIEMENS_API_KEY está en el entorno, se usa tal cual;
+# si no, queda el placeholder que el operador debe reemplazar manualmente.
+if ($Silent -and $env:SIEMENS_API_KEY) {
+    $siemensApiKeyValue = $env:SIEMENS_API_KEY
+} else {
+    $siemensApiKeyValue = "<api_key_real_de_qua>"
+}
 $envContent = @"
 # Generado por instalador el $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 
 # Firebird
 FIREBIRD_PASSWORD=$firebirdPasswordPlain
+
+# API Key de Siemens (sandbox QUA inicial). El valor real se inyecta aquí;
+# config.json solo guarda el marcador literal 'env:SIEMENS_API_KEY'.
+# Para PRD, reemplazar por la key de producción antes del primer envío.
+SIEMENS_API_KEY=$siemensApiKeyValue
 
 # UI
 UI_PORT=$UIPort
@@ -232,6 +340,9 @@ DATA_SOURCE=demo
 "@
 $envContent | Out-File -FilePath "$InstallDir\.env" -Encoding UTF8 -NoNewline
 Write-OK ".env creado"
+if ($siemensApiKeyValue -eq "<api_key_real_de_qua>") {
+    Write-Warn "Recuerde reemplazar SIEMENS_API_KEY=<api_key_real_de_qua> en .env con la clave real antes del primer envío."
+}
 
 Write-Host ""
 Write-Host "  IMPORTANTE: Para PRODUCCION, edite el archivo .env y cambie:" -ForegroundColor Yellow

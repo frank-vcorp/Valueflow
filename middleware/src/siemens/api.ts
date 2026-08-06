@@ -1,5 +1,6 @@
 import axios, { AxiosError } from 'axios';
 import { readRuntimeConfig } from '../config/runtime';
+import { env } from '../config/env';
 import { logger, maskApiKey, safeError } from '../logger/winston';
 
 export interface SendBatchResult { status: number; body: string; }
@@ -7,8 +8,9 @@ const sleep = (milliseconds: number): Promise<void> => new Promise((resolve) => 
 
 export async function sendBatch(payload: unknown[], endpoint: string): Promise<SendBatchResult> {
   const config = readRuntimeConfig();
-  const apiKey = config.siemens.api_key;
-  if (!apiKey) throw new Error('API Key no configurada. Configurar desde UI.');
+  // La api_key real nunca está en config.json; se carga desde .env (variable SIEMENS_API_KEY).
+  const apiKey = env.siemensApiKey;
+  if (!apiKey) throw new Error('API Key no configurada. Definir SIEMENS_API_KEY en .env');
   const url = `${config.siemens.base_url.replace(/\/$/, '')}/${config.siemens.environment}${endpoint}`;
   let delay = config.retry_policy.initial_delay_ms;
   for (let attempt = 1; attempt <= config.retry_policy.max_retries; attempt += 1) {
@@ -45,8 +47,8 @@ export async function sendBatch(payload: unknown[], endpoint: string): Promise<S
 
 export async function testSiemensConnection(): Promise<number> {
   const config = readRuntimeConfig();
-  const apiKey = config.siemens.api_key;
-  if (!apiKey) throw new Error('API Key no configurada');
+  const apiKey = env.siemensApiKey;
+  if (!apiKey) throw new Error('API Key no configurada. Definir SIEMENS_API_KEY en .env');
 
   // Test real: POST a /inventory/create_record con payload mínimo válido
   // Esperamos 4xx (validación de campos) = la API está respondiendo y autenticando correctamente

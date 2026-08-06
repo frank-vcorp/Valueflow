@@ -23,8 +23,8 @@ export async function fetchSalesByDate(date: Date): Promise<SalesRecord[]> {
     SELECT TRIM(f.CVE_DOC), f.FECHA_DOC, d.NUM_PAR, TRIM(d.CVE_ART), i.DESCR,
            d.CANT, d.PREC, d.IMPU1, COALESCE(d.NUM_ALM, f.NUM_ALMA, 1)
     FROM FACTF01 f
-    INNER JOIN PAR_FACTF01 d ON d.CVE_DOC = f.CVE_DOC
-    INNER JOIN INVE01 i ON i.CVE_ART = d.CVE_ART
+    INNER JOIN PAR_FACTF01 d ON TRIM(d.CVE_DOC) = TRIM(f.CVE_DOC)
+    INNER JOIN INVE01 i ON TRIM(i.CVE_ART) = TRIM(d.CVE_ART)
     WHERE f.FECHA_DOC = ? AND f.STATUS <> 'C'
       AND TRIM(i.LIN_PROD) IN (${placeholders})
     ORDER BY f.CVE_DOC, d.NUM_PAR`;

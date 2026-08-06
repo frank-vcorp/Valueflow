@@ -26,6 +26,12 @@ describe('configuración', () => {
     expect(readRuntimeConfig().batch_size).toBe(3000);
     expect(() => validateRuntimeConfig({})).toThrow();
   });
+  it('rechaza api_key como string real (debe ser literal env:SIEMENS_API_KEY)', () => {
+    const valid = readRuntimeConfig();
+    expect(valid.siemens.api_key).toBe('env:SIEMENS_API_KEY');
+    const realKey = { ...valid, siemens: { ...valid.siemens, api_key: 'real-api-key-should-be-rejected-32chars-minimum-fake-payload' } };
+    expect(() => validateRuntimeConfig(realKey)).toThrow(/env:SIEMENS_API_KEY/);
+  });
 });
 
 describe('transformadores', () => {

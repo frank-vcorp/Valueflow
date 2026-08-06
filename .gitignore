@@ -105,3 +105,8 @@ __pycache__/
 dist-pkg/
 *.zip
 !middleware/docs/**/*.zip
+
+# ===== Paquetes de instalación local (no versionar) =====
+FirebirdCS-*.amd64/
+InnoSetup-*/
+FirebirdCS*/
