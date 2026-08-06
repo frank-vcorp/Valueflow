@@ -3,10 +3,116 @@
 **Cliente:** REPRESENTACIONES AGA 2 (Repaga)
 **Stack destino:** Aspel SAE 10 + Siemens PoSi API
 **Contacto:** Francisco Aguirre
-**Última actualización:** 2026-08-05 (22:30)
+**Última actualización:** 2026-08-06 (13:40 CST)
 
 ## Objetivo
 Integrar Aspel SAE 10 con Siemens PoSi para sincronizar ventas (Value Flow) e inventario en tiempo real mediante middleware local.
+
+---
+
+## 🔴 NOTAS PARA PRÓXIMA SESIÓN (2026-08-06)
+
+### Estado del lote `lote-ventas-20260805-01`
+
+| Ticket | Estado | Notas |
+|--------|--------|-------|
+| FACT-20260805-01 (validación esquema BD) | ✅ DONE | 46,430 facturas en FACTF01 |
+| FACT-20260805-02 (E2E ventas) | ✅ DONE | CFDI_32700 enviado a QUA, status=201 |
+| FIX-20260805-01 (race condition firebird) | ✅ DONE | NO_WAIT + streaming fetch |
+| IMPL-20260806-01 (QA fixes Gemini) | ✅ DONE | 8 fixes aplicados por SOFIA |
+
+### ⚠️ Bloqueadores HUMANOS pendientes (no se pueden resolver automáticamente)
+
+1. **Rotar API Key QUA con Siemens (B5)**
+   - Estado: code está con placeholder `<api_key_a_configurar>` en `installer/install.ps1`
+   - Riesgo: la key real `I1k****gbv` está expuesta en historial de git público
+   - Acción Frank: solicitar nueva API key al Data Steward de Siemens; reemplazar placeholder tras instalar
+   - Workaround: mientras tanto, instalar y pegar la key directamente en UI Configuración → API Key Siemens
+
+2. **Confirmar mapeo IMPU1 vs COST con Data Steward (B7)**
+   - Estado: `middleware/src/siemens/sales.ts:32-39` usa `d.IMPU1` para `extended_cost_of_goods_sold`
+   - Esperado según análisis: `CANT × COST`
+   - Acción Frank: preguntar a Siemens si el campo correcto es COST en lugar de IMPU1
+   - Si confirma: SOFIA arregla con task pequeña (~5 líneas)
+
+### 🟡 Pendientes funcionales (no bloquean go-live sandbox)
+
+- Credenciales PRD de Siemens (actualmente solo QUA)
+- Decisión `quantity_unit_of_measure` ("pz" vs "each")
+- Actualización del cliente a Aspel SAE 10 (actualmente tiene SAE 9.0)
+
+### 🔧 Artefactos listos para usar
+
+- **Instalable:** `installer/build_output/Valueflow-Setup-v1.0.exe` (48 MB)
+- **SHA256:** `9f33080c589352580ac3b9bfeb1398d203ec2b9f982b4ccc1d62d2d66f2a0a8b`
+- **Bundle alternativo:** `dist-pkg/valueflow-middleware-v1.0.zip` (29 MB)
+- **Último commit:** `e785aff` en `main` (GitHub)
+
+### 🔐 Credenciales del middleware (para pruebas)
+
+- **UI login:** user=`Admin`, pass=`Admin123`
+- **API key Siemens:** preconfigurada como placeholder (cambiar desde UI Configuración)
+- **BD Aspel:** ruta configurable en wizard del instalable
+
+### 📋 Reportes generados esta sesión
+
+- `analysis/PRUEBA_E2E_VENTAS_20260805.md` — E2E QUA con CFDI_32700
+- `analysis/FIX-20260805-01-firebird-concurrency.md` — Detalle del fix de race condition
+- `analysis/VALIDACION_BD_FIREBIRD_20260805_R2.md` — Validación completa BD
+- `analysis/PROCEDIMIENTO_LEVANTAR_FIREBIRD_FLAMEROBIN.md` — Procedimiento Linux
+- `installer/COMPILAR-EXE-EN-VM.md` — Guía paso a paso para VM
+
+### 🚨 Comando de rescate (si servicio no levanta)
+
+Pegar en PowerShell Admin de la VM si el instalable no logra arrancar PM2:
+
+```powershell
+Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 2
+Set-Location "C:\apps\siemens-middleware\middleware"
+$nodeExe = "C:\apps\siemens-middleware\node\node-v20.14.0-win-x64\node.exe"
+Start-Process -FilePath $nodeExe -ArgumentList "dist/index.js" -WindowStyle Hidden
+Start-Sleep -Seconds 5
+Get-Process node
+netstat -an | findstr :4567
+Start-Process "http://localhost:4567/"
+```
+
+### 📋 Próximos pasos para go-live producción
+
+1. Frank ejecuta instalable en VM Windows 11 (SHA256 arriba)
+2. Login con Admin/Admin123
+3. Pegar nueva API key QUA en UI Configuración → API Key Siemens
+4. Esperar rotación de Siemens
+5. Confirmar B7 con Data Steward (IMPU1 vs COST)
+6. Si B7 positivo: SOFIA arregla `sales.ts`
+7. Re-test en QUA (5 requests sin 502)
+8. Instalar en PC de Ing. Paco
+9. Cron job 24h: monitorear logs por errores
+
+### 🔄 Historial de cambios recientes
+
+| Commit | Descripción |
+|--------|-------------|
+| `e785aff` | Fix 8 QA blockers (B1-B8): bcrypt escape, config.json completo, fechas BETWEEN, race condition, API key placeholder, CI build, comentario IMPU1, verificación addon |
+| `cfdf3d9` | Fix installer: búsqueda inteligente middleware + fallback Node directo |
+| `6e23151` | Fix installer: filtro de archivos del wizard (mostrar todos) |
+| `d4f6620` | Feat installer: wizard 1-solo-campo + credenciales preconfiguradas + icono |
+| `0481358` | Fix installer: bypass PowerShell Execution Policy |
+| `8f20c11` | Fix installer: corregir firma CreateInputFilePage.Add |
+| `893a217` | Feat installer: wizard 3-campos todo-en-uno |
+| `0e4cc5b` | Chore: trigger build-installer |
+| `5396b81` | Feat middleware: E2E QUA + concurrency fix + install package |
+
+---
+
+## Arquitectura confirmada
+- Middleware en la misma PC Windows de SAE 10 (conexión localhost)
+- Acceso directo a Firebird 5.0 vía `node-firebird-native-api`
+- UI local de administración en `localhost:4567`
+- Scheduler con `node-cron` embebido
+- Sin mantenimiento mensual — intervenciones por presupuesto previo
+- Volumen del cliente: ~12,000 productos → 4 batches de inventario
 
 ## Arquitectura confirmada
 - Middleware en la misma PC Windows de SAE 10 (conexión localhost)
