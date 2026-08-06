@@ -248,7 +248,7 @@ if (-not (Test-Path "$InstallDir\package.json")) {
     pause
     exit 4
 }
-Write-OK ("Archivos copiados correctamente ({0} archivos)" -f (Get-ChildItem $InstallDir -Recurse -File | Measure-Object).Count)
+Write-OK ('Archivos copiados correctamente')
 
 # ===== 6. Instalar dependencias de produccion =====
 Write-Step "Instalando dependencias npm (puede tardar 3-5 min)..."
@@ -280,11 +280,10 @@ LOG_LEVEL=info
 LOG_DIR=logs
 "@
 Set-Content -Path $envPath -Value $envContent -Force
-# FIX IMPL-20260806-05: si quedó el placeholder, advertir al operador para que configure
-# la key real antes de iniciar envíos a producción.
-if ($SiemensAPIKey -eq "<api_key_a_configurar>" -or [string]::IsNullOrWhiteSpace($SiemensAPIKey)) {
-    Write-Warn "SIEMENS_API_KEY sin configurar (placeholder)."
-    Write-Host "  Cambia la key desde la UI (https://localhost:$UIPort) en Configuracion > API Key Siemens" -ForegroundColor Yellow
+# FIX IMPL-20260806-05: advertir si quedo el placeholder de API Key
+if ([string]::IsNullOrWhiteSpace($SiemensAPIKey)) {
+    Write-Warn 'SIEMENS_API_KEY sin configurar (vacio).'
+    Write-Host ('  Cambia la key desde la UI (https://localhost:' + $UIPort + ') en Configuracion > API Key Siemens') -ForegroundColor Yellow
 }
 Write-OK ".env configurado"
 
@@ -367,12 +366,15 @@ try {
                    Select-Object -First 1 -ExpandProperty FullName
     }
     if (-not $nodeBin) {
-        throw "No se encontro node.exe en ninguna ruta conocida"
+        throw 'No se encontro node.exe en ninguna ruta conocida'
     }
-    }
-    Write-Host "    Usando: $nodeBin"
-    $bcryptHash = & $nodeBin -e "const b = require('bcryptjs'); console.log(b.hashSync(process.argv[1], 12));" $UIPasswordPlain 2>&1
+    Write-Host ('    Usando: ' + $nodeBin)
+    # Usar un archivo temporal para pasar el password a Node (evita escape issues)
+    $passwordFile = Join-Path $env:TEMP 'valueflow_bcrypt_input.txt'
+    Set-Content -Path $passwordFile -Value $UIPasswordPlain -NoNewline -Encoding UTF8
+    $bcryptHash = & $nodeBin -e "const fs=require('fs');const b=require('bcryptjs');const p=fs.readFileSync(process.argv[1],'utf8').trim();console.log(b.hashSync(p,12));" $passwordFile 2>&1
     $bcryptHash = $bcryptHash.Trim()
+    Remove-Item $passwordFile -Force -ErrorAction SilentlyContinue
     Pop-Location
 
     if ($bcryptHash -notmatch '^\$2[ayb]\$') {
@@ -540,12 +542,12 @@ $addonPath = Join-Path $InstallDir "middleware\node_modules\node-firebird-driver
 if (-not (Test-Path $addonPath)) {
     Write-Warn "El addon nativo Firebird no compilo (no se encontro $addonPath)"
     Write-Host "  El middleware NO podra conectarse a la BD Aspel hasta que se compile." -ForegroundColor Yellow
-    Write-Host "  Para compilarlo:" -ForegroundColor Yellow
-    Write-Host "    1. Instalar Visual Studio Build Tools 2022 con el workload 'Desarrollo para escritorio con C++'" -ForegroundColor Yellow
-    Write-Host "    2. Abrir 'Developer Command Prompt for VS 2022' como administrador" -ForegroundColor Yellow
-    Write-Host "    3. cd $InstallDir && npm rebuild node-firebird-driver-native" -ForegroundColor Yellow
+    Write-Host '  Para compilarlo:' -ForegroundColor Yellow
+    Write-Host '    1. Instalar Visual Studio Build Tools 2022 con el workload "Desarrollo para escritorio con C++"' -ForegroundColor Yellow
+    Write-Host '    2. Abrir "Developer Command Prompt for VS 2022" como administrador' -ForegroundColor Yellow
+    Write-Host ("    3. cd " + $InstallDir + " ; npm rebuild node-firebird-driver-native") -ForegroundColor Yellow
 } else {
-    Write-OK "Addon nativo Firebird compilado correctamente: $addonPath"
+    Write-OK ('Addon nativo Firebird compilado correctamente: ' + $addonPath)
 }
 
 # ===== Resumen =====
