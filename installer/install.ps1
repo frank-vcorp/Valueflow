@@ -248,7 +248,7 @@ if (-not (Test-Path "$InstallDir\package.json")) {
     pause
     exit 4
 }
-Write-OK "Archivos copiados correctamente ($(Get-ChildItem $InstallDir -Recurse -File | Measure-Object).Count archivos)"
+Write-OK ("Archivos copiados correctamente ({0} archivos)" -f (Get-ChildItem $InstallDir -Recurse -File | Measure-Object).Count)
 
 # ===== 6. Instalar dependencias de produccion =====
 Write-Step "Instalando dependencias npm (puede tardar 3-5 min)..."
@@ -346,15 +346,29 @@ Write-OK "config.json configurado"
 Write-Host "  Generando hash bcrypt para contrasena UI..."
 try {
     Push-Location $InstallDir
-    # Usar Node portable extraido (con PATH actualizado debe funcionar)
-    $nodeBin = "$env:ProgramFiles\nodejs\node.exe"
-    if (-not (Test-Path $nodeBin)) {
-        # Si no hay Node del sistema, usar el portable extraido
-        $nodeBin = Join-Path (Split-Path $InstallDir) "node\node-v20.14.0-win-x64\node.exe"
+
+    # Buscar Node: portable junto a la instalacion, o del sistema
+    $nodeBin = $null
+    $candidates = @(
+        (Join-Path $InstallDir "node\node-v20.14.0-win-x64\node.exe"),
+        (Join-Path (Split-Path $InstallDir) "node\node-v20.14.0-win-x64\node.exe"),
+        "$env:ProgramFiles\nodejs\node.exe",
+        (Join-Path $env:ProgramFiles "nodejs\node.exe")
+    )
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) {
+            $nodeBin = $candidate
+            break
+        }
     }
-    if (-not (Test-Path $nodeBin)) {
-        # Buscar el node.exe portable en el directorio de instalacion
-        $nodeBin = Get-ChildItem -Path $InstallDir -Recurse -Filter "node.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+    if (-not $nodeBin) {
+        # Busqueda exhaustiva como ultimo recurso
+        $nodeBin = Get-ChildItem -Path "C:\apps", "$env:ProgramFiles" -Recurse -Filter "node.exe" -ErrorAction SilentlyContinue |
+                   Select-Object -First 1 -ExpandProperty FullName
+    }
+    if (-not $nodeBin) {
+        throw "No se encontro node.exe en ninguna ruta conocida"
+    }
     }
     Write-Host "    Usando: $nodeBin"
     $bcryptHash = & $nodeBin -e "const b = require('bcryptjs'); console.log(b.hashSync(process.argv[1], 12));" $UIPasswordPlain 2>&1
@@ -385,7 +399,10 @@ if (-not $pm2Exe) {
     Push-Location $InstallDir
     try {
         npm install -g pm2 pm2-windows-startup 2>&1 | Out-Null
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+        # Refrescar PATH del sistema (sin concatenar incorrectamente)
+        $sysPath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+        $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+        $env:Path = "$sysPath;$userPath"
         if ((Get-Command pm2 -ErrorAction SilentlyContinue).Source) {
             Write-OK "PM2 instalado"
         } else {
