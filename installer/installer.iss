@@ -101,27 +101,21 @@ begin
   FirebirdDBPathPage.Add(
     'Ruta del archivo .FDB de Aspel SAE:',
     'Archivo .FDB|Asel SAE 9.0/10.0 (*.FDB)|*.FDB|Todos los archivos (*.*)|*.*',
-    '.FDB',
-    'C:\Program Files\Aspel\Aspel SAE 9.0\BD\SAE90EMPRE01.FDB',
-    False
+    'C:\Program Files\Aspel\Aspel SAE 9.0\BD\SAE90EMPRE01.FDB'
   );
 
   { Campo 2: API Key de Siemens (vacio por defecto; usuario pega la real) }
   FirebirdDBPathPage.Add(
     'API Key de Siemens PoSi (pegar su key; sandbox o productiva):',
     'API Key (32+ caracteres)',
-    '',
-    '',
-    False
+    ''
   );
 
   { Campo 3: Password para la UI admin (minimo 8 caracteres) }
   FirebirdDBPathPage.Add(
     'Contrasena para la UI web (minimo 8 caracteres):',
     'Contrasena (texto plano)',
-    '',
-    '',
-    False
+    ''
   );
 end;
 
