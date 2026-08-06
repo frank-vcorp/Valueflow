@@ -133,7 +133,7 @@ C:\apps\siemens-middleware\
 {
   "siemens": {
     "base_url": "https://api.pos.siemens.com",
-    "api_key": "I1kLfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv",
+    "api_key": "<api_key_a_configurar>",
     "environment": "QUA",
     "distributor_sender_id": "MX-REPRESENTACIONES"
   },

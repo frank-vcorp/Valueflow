@@ -57,6 +57,20 @@ jobs:
           echo "✓ Repository structure OK"
 
       # ============================================
+      # 2.5 FIX IMPL-20260806-06: compilar TypeScript ANTES de empaquetar.
+      # Sin este paso el bundle solo trae src/ y el instalador falla en runtime porque
+      # dist/ no existe. Además invalidamos cualquier dist/ previo que esté desincronizado
+      # con src/.
+      # ============================================
+      - name: 🔨 Compilar middleware (TypeScript → dist/)
+        run: |
+          cd middleware
+          npm install --no-audit --no-fund
+          npm run build
+          echo "✓ Build OK, dist/ generado:"
+          ls -la dist/ | head -20
+
+      # ============================================
       # 3. Compilar el instalador con Docker + Inno Setup
       # ============================================
       - name: 🔨 Compilar con Docker (Inno Setup preinstalado)

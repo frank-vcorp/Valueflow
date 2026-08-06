@@ -165,10 +165,14 @@ if ($FirebirdDBPath -eq "" -or !(Test-Path $FirebirdDBPath)) {
 Write-OK "BD Aspel encontrada: $FirebirdDBPath"
 
 # CREDENCIALES PRECONFIGURADAS (cambiar despues desde UI)
-$SiemensAPIKey = "I1kLfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv"   # QUA sandbox (cambiar desde UI para produccion)
+# FIX IMPL-20260806-05: API key removida del repo (estaba expuesta en el repo público).
+# El operador DEBE configurar la key real en el primer arranque desde la UI, o
+# inyectarla vía variable de entorno antes de ejecutar el instalador.
+# Rotación de la key QUA comprometida: ACCIÓN EXTERNA pendiente con Frank + Siemens.
+$SiemensAPIKey = "<api_key_a_configurar>"   # Placeholder — configurar antes de producción
 $UIPasswordPlain = "Admin123"                                       # Default UI password (cambiar desde UI)
 $UIUsername = "Admin"                                                # Default UI username
-Write-OK "API Key Siemens QUA preconfigurada (cambiar a produccion desde UI)"
+Write-OK "API Key Siemens pendiente de configurar — completar antes del primer envio a produccion"
 Write-OK "Credenciales UI preconfiguradas: $UIUsername / $UIPasswordPlain (cambiar desde UI)"
 
 # ===== 4. Crear directorio de instalacion =====
@@ -276,6 +280,12 @@ LOG_LEVEL=info
 LOG_DIR=logs
 "@
 Set-Content -Path $envPath -Value $envContent -Force
+# FIX IMPL-20260806-05: si quedó el placeholder, advertir al operador para que configure
+# la key real antes de iniciar envíos a producción.
+if ($SiemensAPIKey -eq "<api_key_a_configurar>" -or [string]::IsNullOrWhiteSpace($SiemensAPIKey)) {
+    Write-Warn "SIEMENS_API_KEY sin configurar (placeholder)."
+    Write-Host "  Cambia la key desde la UI (https://localhost:$UIPort) en Configuracion > API Key Siemens" -ForegroundColor Yellow
+}
 Write-OK ".env configurado"
 
 # ===== 8. Configurar config.json =====
@@ -299,10 +309,34 @@ $configContent = @{
         sales = @{ enabled = $true; cron = "0 3 * * *"; timezone = "America/Mexico_City" }
     }
     batch_size = 3000
+    # FIX IMPL-20260806-02: validateRuntimeConfig exige retry_policy y optional_fields.
+    # Sin estas secciones el middleware falla al arrancar.
+    retry_policy = @{
+        max_retries = 5
+        initial_delay_ms = 2000
+        backoff_multiplier = 2
+        max_delay_ms = 60000
+    }
     siemens_line_filter = @{
         enabled = $true
         lines = @("BAJA","SINU","SIMAT","LP","DRIVE","MOTOR","SINUM","SERVI","OBSO","SENSO","SERVO","INSTR","UPS","SIMA","ESPE")
         include_inactive_products = $true
+    }
+    optional_fields = @{
+        inventory = @{
+            distributor_order_taking_branch_name = $false
+            distributor_order_taking_branch_id = $true
+            vendor_item_options = $false
+            upc_ean = $false
+            stock_item = $false
+            abc_segmentation = $false
+        }
+        sales = @{
+            product_description = $false
+            customer_name = $false
+            discount_amount = $false
+            tax_amount = $false
+        }
     }
 } | ConvertTo-Json -Depth 10
 Set-Content -Path $configPath -Value $configContent -Force
@@ -332,8 +366,9 @@ try {
     }
 
     # Leer .env actual y actualizar UI_PASSWORD_HASH
+    # FIX IMPL-20260806-01: escapar `$bcryptHash` con backtick para que PowerShell no lo interprete como variable
     $envContent = Get-Content $envPath -Raw
-    $envContent = $envContent -replace "(?ms)^UI_PASSWORD_HASH=.*$", "UI_PASSWORD_HASH=$bcryptHash"
+    $envContent = $envContent -replace "(?ms)^UI_PASSWORD_HASH=.*$", "UI_PASSWORD_HASH=`$bcryptHash"
     Set-Content -Path $envPath -Value $envContent -Force
     Write-OK "UI_PASSWORD_HASH generado para password: $UIPasswordPlain"
     Write-Host "    Hash: $bcryptHash" -ForegroundColor Gray
@@ -479,6 +514,21 @@ try {
     }
 } catch {
     Write-Warn "UI aun no responde. Puede tardar 10-20 segundos en arrancar. Verificar en navegador."
+}
+
+# FIX IMPL-20260806-08: verificar que el addon nativo de Firebird se compiló.
+# node-firebird-driver-native requiere node-gyp + Visual Studio Build Tools (C++ workload).
+# Sin el .node compilado, el middleware NO puede leer la BD Aspel.
+$addonPath = Join-Path $InstallDir "middleware\node_modules\node-firebird-driver-native\build\Release\addon.node"
+if (-not (Test-Path $addonPath)) {
+    Write-Warn "El addon nativo Firebird no compilo (no se encontro $addonPath)"
+    Write-Host "  El middleware NO podra conectarse a la BD Aspel hasta que se compile." -ForegroundColor Yellow
+    Write-Host "  Para compilarlo:" -ForegroundColor Yellow
+    Write-Host "    1. Instalar Visual Studio Build Tools 2022 con el workload 'Desarrollo para escritorio con C++'" -ForegroundColor Yellow
+    Write-Host "    2. Abrir 'Developer Command Prompt for VS 2022' como administrador" -ForegroundColor Yellow
+    Write-Host "    3. cd $InstallDir && npm rebuild node-firebird-driver-native" -ForegroundColor Yellow
+} else {
+    Write-OK "Addon nativo Firebird compilado correctamente: $addonPath"
 }
 
 # ===== Resumen =====

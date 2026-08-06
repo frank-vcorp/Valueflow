@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import type { Attachment, Client, Transaction } from 'node-firebird-driver';
-import { DatabaseReadWriteMode } from 'node-firebird-driver';
+import { DatabaseReadWriteMode, TransactionIsolation } from 'node-firebird-driver';
 import { readRuntimeConfig } from '../config/runtime';
 import { env } from '../config/env';
 import { logger, safeError } from '../logger/winston';
@@ -11,7 +11,9 @@ class FirebirdPool {
   private client?: Client;
   private readonly connections: PooledAttachment[] = [];
   private waiters: Array<(connection: PooledAttachment) => void> = [];
-  private readonly maxConnections = 5;
+  // FIX IMPL-20260806-04: maxConnections=3 (suficiente para 2 jobs concurrentes + 1 buffer)
+  // — antes 5 saturaba el pool en jobs paralelos.
+  private readonly maxConnections = 3;
   private readonly timeoutMs = 30_000;
 
   constructor() {
@@ -76,21 +78,47 @@ class FirebirdPool {
       let transaction: Transaction | undefined;
       try {
         connection = await this.acquire();
-        transaction = await connection.attachment.startTransaction({ accessMode: 'READ_ONLY', waitMode: 'WAIT' });
+        // FIX IMPL-20260806-04: NO_WAIT evita bloqueos cuando inventory + sales
+        // se disparan a la vez desde la UI. Si la tabla está lockeada falla
+        // rápido (lock-conflict) y el retry loop con backoff lo recupera.
+        // READ_COMMITTED (+RECORD_VERSION) asegura que solo se leen commits
+        // confirmados sin bloquearse por transacciones concurrentes.
+        transaction = await connection.attachment.startTransaction({
+          accessMode: 'READ_ONLY',
+          waitMode: 'NO_WAIT',
+          isolation: TransactionIsolation.READ_COMMITTED,
+          readCommittedMode: 'RECORD_VERSION'
+        });
         const resultSet = await Promise.race([
           connection.attachment.executeQuery(transaction, sql, parameters),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timeout Firebird de 30 segundos')), this.timeoutMs))
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timeout Firebird de 60 segundos')), this.timeoutMs * 2))
         ]);
-        const rows = await resultSet.fetch();
+        // FIX IMPL-20260806-04: streaming chunks de 1000 filas. fetch() bloqueante
+        // podía agotar el timeout del server Firebird en queries grandes (inventario
+        // ~8000 productos). Los chunks liberan la transacción temprano si fuera
+        // necesario y permiten al event loop procesar otras señales.
+        // API real: fetch({ fetchSize }) — fetchSize es el batch size de filas.
+        const rows: unknown[][] = [];
+        let chunk: unknown[][];
+        do {
+          chunk = await Promise.race([
+            resultSet.fetch({ fetchSize: 1000 }),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timeout fetch')), this.timeoutMs * 2))
+          ]) as unknown[][];
+          rows.push(...chunk);
+        } while (chunk.length === 1000);
         await resultSet.close();
         await transaction.commit();
-        if (Date.now() - started > 5000) logger.warn('Query Firebird lenta', { duration_ms: Date.now() - started });
+        if (Date.now() - started > 5000) logger.warn('Query Firebird lenta', { duration_ms: Date.now() - started, rows: rows.length });
         return rows as T[];
       } catch (error) {
         lastError = error;
         if (transaction) { try { await transaction.rollback(); } catch { /* conexión caída */ } }
         if (connection) await this.discard(connection);
         logger.warn('Error en query Firebird; reintentando', { attempt, error: safeError(error) });
+        // FIX IMPL-20260806-04: backoff entre reintentos para no saturar el pool.
+        // retry 1 → 500ms, retry 2 → 1000ms, retry 3 → 1500ms.
+        await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
       } finally {
         if (connection && this.connections.includes(connection)) this.release(connection);
       }

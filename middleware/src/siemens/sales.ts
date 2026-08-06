@@ -29,6 +29,14 @@ export function mapSalesRecord(record: SalesRecord): SiemensSalesRecord {
     distributor_order_taking_branch_id: String(record.branch_id),
     vendor_item_number: record.vendor_item_number,
     quantity: record.quantity,
+    // B7 (IMPL-20260806-07) — ISSUE PENDIENTE DE NEGOCIO, NO TOCAR SIN OK DE DATA STEWARD:
+    // El campo `unit_cost` y `extended_cost_of_goods_sold` se computan actualmente
+    // como `IMPU1 / CANT` e `IMPU1`. IMPU1 es el IVA (impuesto) y NO el costo.
+    // Según MAPEO_CAMPO_A_CAMPO y PoSi Siemens, estos campos esperan `CANT × COST`.
+    // Decisión pendiente: ¿es IMPU1 el campo equivocado en el SELECT de queries/sales.ts
+    // (debería ser COST), o el cálculo de unit_cost/extended_cost_of_goods_sold aquí
+    // es el equivocado (debería seguir el patrón del inventario: usar campo dedicado)?
+    // ACCIÓN EXTERNA REQUERIDA: confirmar con Data Steward de Siemens antes de corregir.
     unit_cost: record.quantity === 0 ? 0 : record.extended_cost / record.quantity,
     extended_cost_of_goods_sold: record.extended_cost,
     currency_code: 'MXN'

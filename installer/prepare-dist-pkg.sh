@@ -32,6 +32,12 @@ cp "$SCRIPT_DIR/install.bat" "$DIST_PKG/installer/"
 cp "$SCRIPT_DIR/installer.iss" "$DIST_PKG/installer/"
 [ -f "$SCRIPT_DIR/build-installer.sh" ] && cp "$SCRIPT_DIR/build-installer.sh" "$DIST_PKG/installer/"
 
+# Copiar assets (Node.js portable, drivers nativos, etc.)
+if [ -d "$SCRIPT_DIR/assets" ]; then
+    mkdir -p "$DIST_PKG/installer/assets"
+    cp -r "$SCRIPT_DIR/assets/"* "$DIST_PKG/installer/assets/"
+fi
+
 # Crear README principal
 cat > "$DIST_PKG/README.md" << 'EOF'
 # Valueflow Middleware - Paquete de Distribución
