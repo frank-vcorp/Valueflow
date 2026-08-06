@@ -140,7 +140,9 @@ if (Test-Path $ConfigFile) {
     Remove-Item $ConfigFile -Force -ErrorAction SilentlyContinue
 } else {
     Write-Warn 'No se encontro archivo de credenciales (ejecutado sin Inno Setup)'
-    $FirebirdDBPath = Read-Host '  Ruta del archivo .FDB de Aspel SAE'
+    # Usar path por defecto en lugar de Read-Host (evita cuelgue de stdin)
+    $FirebirdDBPath = 'C:\Users\frank\Desktop\REPAGA\SAE90EMPRE01.FDB'
+    Write-Host ('  Usando ruta por defecto: ' + $FirebirdDBPath) -ForegroundColor Yellow
 }
 
 # Validar ruta de BD
@@ -197,8 +199,10 @@ if (-not $SourceMiddleware) {
         Write-Host ('    - ' + $path) -ForegroundColor Yellow
     }
     Write-Host ''
-    Write-Host '  Ingrese la ruta manualmente:' -ForegroundColor Cyan
-    $SourceMiddleware = Read-Host '  Ruta del middleware'
+    Write-Host '  ERROR: Instalacion abortada. Reinstale el bundle correctamente.' -ForegroundColor Red
+    pause
+    exit 4
+}
     if (-not (Test-Path (Join-Path $SourceMiddleware 'package.json'))) {
         Write-Err ('El path ' + $SourceMiddleware + ' no contiene un middleware valido')
         pause
@@ -534,4 +538,5 @@ Write-Host ('    1. Abrir http://localhost:' + $UIPort) -ForegroundColor Yellow
 Write-Host '    2. Login con admin / Admin123' -ForegroundColor Yellow
 Write-Host '    3. Ir a Configuracion > API Key Siemens > Actualizar' -ForegroundColor Yellow
 Write-Host ''
-Read-Host '  Presiona ENTER para cerrar'
+Write-Host '  Cerrando en 5 segundos...' -ForegroundColor Gray
+Start-Sleep -Seconds 5
