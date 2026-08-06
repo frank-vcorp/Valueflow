@@ -105,10 +105,13 @@ begin
   );
 
   { UNICO campo: Ruta del archivo .FDB de Aspel SAE }
+  { Filtro: mostramos TODOS los archivos primero para que el usuario encuentre }
+  { el .FDB en cualquier carpeta. Para que Inno Setup muestre archivos, el }
+  { filtro debe terminar con *.* (no *.FDB primero) y los filtros se separan con | }
   FirebirdDBPathPage.Add(
     'Ruta del archivo .FDB de Aspel SAE (use Examinar para navegar):',
-    'Archivo .FDB|Asel SAE 9.0/10.0 (*.FDB)|*.FDB|Todos los archivos (*.*)|*.*',
-    'C:\Program Files\Aspel\Aspel SAE 9.0\BD\SAE90EMPRE01.FDB'
+    'Todos los archivos (*.*)|*.*|Archivos Firebird (*.FDB)|*.FDB',
+    'C:\Users\frank\Desktop\REPAGA\SAE90EMPRE01.FDB'
   );
 end;
 
