@@ -45,6 +45,25 @@ $LogoText = @"
 "@
 Write-Host $LogoText -ForegroundColor Cyan
 
+# ===== 0. Deshabilitar Execution Policy (CRITICO para PM2/Node global) =====
+Write-Step "Configurando PowerShell Execution Policy..."
+try {
+    # Bypass a nivel proceso: solo aplica a esta sesión, no cambia el sistema globalmente
+    Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
+
+    # Tambien intentar a nivel CurrentUser (persistente para el usuario actual)
+    $currentPolicy = Get-ExecutionPolicy -Scope CurrentUser -ErrorAction SilentlyContinue
+    if ($currentPolicy -eq "Restricted") {
+        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction SilentlyContinue
+        Write-OK "Execution Policy cambiada de Restricted a RemoteSigned (solo para este usuario)"
+    } else {
+        Write-OK "Execution Policy actual: $currentPolicy (compatible con PM2)"
+    }
+} catch {
+    Write-Warn "No se pudo cambiar Execution Policy: $_"
+    Write-Host "  Continuando... PM2 puede no arrancar si la policy es 'Restricted'" -ForegroundColor Yellow
+}
+
 # ===== 1. Verificar permisos de administrador =====
 Write-Step "Verificando permisos de administrador..."
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -56,29 +75,67 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 }
 Write-OK "Permisos OK"
 
-# ===== 2. Verificar Node.js 20 LTS =====
+# ===== 2. Verificar / Extraer Node.js 20 LTS portable =====
 Write-Step "Verificando Node.js 20 LTS..."
-$nodeExe = (Get-Command node -ErrorAction SilentlyContinue).Source
+
+$nodeExe = $null
 $nodeVersion = $null
-if ($nodeExe) {
+
+# Opcion A: Node.js del sistema (ya instalado en PATH)
+$systemNode = (Get-Command node -ErrorAction SilentlyContinue).Source
+if ($systemNode) {
+    $nodeExe = $systemNode
     $nodeVersion = & node --version
-    Write-OK "Node.js instalado: $nodeVersion"
-} else {
-    Write-Err "============================================================"
-    Write-Err "  PREREQUISITO FALTANTE: Node.js 20 LTS"
-    Write-Err "============================================================"
-    Write-Host ""
-    Write-Host "  Pasos para instalar:" -ForegroundColor Yellow
-    Write-Host "  1. Abrir navegador en: https://nodejs.org/dist/v20.14.0/" -ForegroundColor Yellow
-    Write-Host "  2. Descargar 'node-v20.14.0-x64.msi' (~30 MB)"
-    Write-Host "  3. Doble click, Next > Next > Install (todo por defecto)"
-    Write-Host "  4. ABRIR PowerShell NUEVO y volver a ejecutar este instalador"
-    Write-Host ""
-    Write-Host "  Si ya esta instalado pero no se detecta, abre PowerShell como admin" -ForegroundColor Yellow
-    Write-Host "  y verifica con: where.exe node" -ForegroundColor Yellow
-    Write-Host ""
-    pause
-    exit 2
+    Write-OK "Node.js del sistema: $nodeVersion"
+}
+
+# Opcion B: Extraer Node.js portable del bundle (incluido en el .exe)
+if (-not $nodeExe) {
+    $nodeZip = Join-Path $PSScriptRoot "..\node-portable\node-v20.14.0-win-x64.zip"
+    $nodeExtractDir = Join-Path $InstallDir "node"
+
+    if (Test-Path $nodeZip) {
+        Write-Step "Extrayendo Node.js portable desde el bundle..."
+        if (-not (Test-Path $nodeExtractDir)) {
+            New-Item -ItemType Directory -Path $nodeExtractDir -Force | Out-Null
+        }
+        # Usar Expand-Archive de PowerShell (compatible con ZIP)
+        Expand-Archive -Path $nodeZip -DestinationPath $nodeExtractDir -Force
+        Write-OK "Node.js portable extraido a $nodeExtractDir"
+
+        $nodeExe = Join-Path $nodeExtractDir "node-v20.14.0-win-x64\node.exe"
+        if (Test-Path $nodeExe) {
+            # Agregar al PATH de la sesion actual
+            $nodeBinDir = Split-Path $nodeExe -Parent
+            $env:Path = "$nodeBinDir;$env:Path"
+
+            # Persistir PATH a nivel sistema (HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment)
+            $currentSysPath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+            if ($currentSysPath -notlike "*$nodeBinDir*") {
+                [System.Environment]::SetEnvironmentVariable("Path", "$currentSysPath;$nodeBinDir", "Machine")
+                Write-OK "Node.js agregado al PATH del sistema"
+            }
+            $nodeVersion = & $nodeExe --version
+            Write-OK "Node.js portable activo: $nodeVersion"
+        } else {
+            Write-Err "node.exe no encontrado despues de extraer"
+            pause
+            exit 2
+        }
+    } else {
+        Write-Err "============================================================"
+        Write-Err "  No se encontro Node.js en sistema ni en el bundle"
+        Write-Err "============================================================"
+        Write-Host ""
+        Write-Host "  Soluciones:" -ForegroundColor Yellow
+        Write-Host "  1. Instalar Node.js 20 LTS desde https://nodejs.org/" -ForegroundColor Yellow
+        Write-Host "  2. O descargar node-v20.14.0-win-x64.zip y copiarlo a:" -ForegroundColor Yellow
+        Write-Host "     $nodeZip" -ForegroundColor Yellow
+        Write-Host "  3. Volver a ejecutar este instalador" -ForegroundColor Yellow
+        Write-Host ""
+        pause
+        exit 2
+    }
 }
 
 $nodeMajor = ($nodeVersion -replace 'v','').Split('.')[0]
