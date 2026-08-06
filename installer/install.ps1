@@ -1,18 +1,20 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Instalador de Valueflow Middleware - Aspel SAE 10 ↔ Siemens PoSi
+    Instalador de Valueflow Middleware - Aspel SAE ↔ Siemens PoSi
+
 .DESCRIPTION
-    Script PowerShell que automatiza la instalación completa del middleware:
-    - Verifica/Instala Node.js 20 LTS
-    - Copia el código del middleware a C:\apps\siemens-middleware
-    - Ejecuta npm install --production
-    - Configura .env y config.json
-    - Instala y configura PM2 como Servicio Windows
+    Script PowerShell simple, robusto y TODO-EN-UNO:
+    - Lee credenciales del archivo temporal dejado por Inno Setup
+    - Verifica Node.js 20 LTS (falla con instrucciones si no esta)
+    - Copia el codigo del middleware a C:\apps\siemens-middleware
+    - Ejecuta npm install --production (incluye compilación nativa para Firebird)
+    - Configura .env con secretos (QUA por defecto, puede cambiarse desde UI)
+    - Levanta el servicio con PM2
     - Crea acceso directo en el escritorio
-    - Excluye del antivirus
+
 .NOTES
-    Versión: 1.0
+    Version: 2.0 (re-escrito tras feedback: ZERO descargas de internet)
     Autor: VCorp - Frank Saavedra
     Para: Representaciones Aga de Saltillo
 #>
@@ -20,207 +22,144 @@
 [CmdletBinding()]
 param(
     [string]$InstallDir = "C:\apps\siemens-middleware",
-    [string]$SourceDir = $PSScriptRoot,
-    [string]$NodeVersion = "20.14.0",
-    [int]$UIPort = 4567,
-    [string]$FirebirdDBPath = "",
-    [string]$FirebirdUser = "SYSDBA",
-    [string]$SiemensEnvironment = "qua",
-    [string]$DistributorSenderID = "MX-REPRESENTACIONES",
-    # Si -Silent se especifica, el instalador NO hace Read-Host: usa las variables
-    # de entorno FIREBIRD_PASSWORD y UI_PASSWORD_PLAIN (o -UiPasswordPlain) si están
-    # definidas, o falla con error claro.
-    [switch]$Silent,
-    [string]$UiPasswordPlain = "",
-    [string]$FirebirdDBPathOverride = ""
+    [int]$UIPort = 4567
 )
 
-# ===== Búsqueda automática de BD Aspel SAE =====
-# Busca SAE*.FDB en las rutas comunes donde Aspel instala SAE 9.0/10.0
-# (C:\Program Files\Aspel, C:\SAE, D:\Aspel) y en el directorio del instalador.
-# Devuelve la primera coincidencia o $null. Prioriza SAE9 (cliente actual) sobre SAE10.
-function Find-AspelDatabase {
-    param([string]$HintPath = "")
-    $candidates = @()
-    if ($HintPath -ne "") { $candidates += $HintPath }
-
-    $searchRoots = @(
-        "C:\Program Files\Aspel",
-        "C:\SAE",
-        "D:\Aspel",
-        (Join-Path $PSScriptRoot "..\middleware")
-    )
-    foreach ($root in $searchRoots) {
-        if (Test-Path $root) {
-            $found = Get-ChildItem -Path $root -Filter "SAE*.FDB" -Recurse -ErrorAction SilentlyContinue |
-                Sort-Object @{Expression={ $_.Name -like "SAE9*" }; Descending=$true},
-                              @{Expression={ $_.FullName.Length }; Ascending=$true}
-            foreach ($f in $found) { $candidates += $f.FullName }
-        }
-    }
-
-    # Filtrar duplicados preservando orden
-    $seen = @{}
-    $ordered = @()
-    foreach ($c in $candidates) {
-        if (-not $seen.ContainsKey($c)) {
-            $seen[$c] = $true
-            $ordered += $c
-        }
-    }
-    return $ordered
-}
-
-# Si no se pasó -FirebirdDBPath explícito, autodetectar
-if ($FirebirdDBPath -eq "" -and $FirebirdDBPathOverride -ne "") {
-    $FirebirdDBPath = $FirebirdDBPathOverride
-}
-if ($FirebirdDBPath -eq "") {
-    $detected = Find-AspelDatabase
-    if ($detected.Count -gt 0) {
-        $FirebirdDBPath = $detected[0]
-        if ($detected.Count -gt 1) {
-            Write-Warn "Se encontraron $($detected.Count) BD Aspel. Usando la primera: $FirebirdDBPath"
-            foreach ($alt in $detected[1..($detected.Count - 1)]) { Write-Host "    Alternativa: $alt" -ForegroundColor Gray }
-        } else {
-            Write-Host "  BD Aspel detectada automáticamente: $FirebirdDBPath" -ForegroundColor Cyan
-        }
-    }
-}
-
-# ===== Configuración =====
-$ErrorActionPreference = "Stop"
-$ProgressPreference = "Continue"
-
-# Colores
+# ===== Colores para output =====
 function Write-Step { param($msg) Write-Host "`n===> $msg" -ForegroundColor Cyan }
-function Write-OK { param($msg) Write-Host "  ✓ $msg" -ForegroundColor Green }
-function Write-Warn { param($msg) Write-Host "  ⚠ $msg" -ForegroundColor Yellow }
-function Write-Err { param($msg) Write-Host "  ✗ $msg -ForegroundColor Red" }
+function Write-OK { param($msg) Write-Host "  [OK] $msg" -ForegroundColor Green }
+function Write-Warn { param($msg) Write-Host "  [!] $msg" -ForegroundColor Yellow }
+function Write-Err { param($msg) Write-Host "  [X] $msg -ForegroundColor Red" }
 
+# ===== Banner =====
 $LogoText = @"
-╔═══════════════════════════════════════════════════════╗
-║                                                       ║
-║       Valueflow Middleware                            ║
-║       Aspel SAE 10 ↔ Siemens PoSi Portal             ║
-║                                                       ║
-║       Instalador v1.0                                 ║
-║       VCorp - Representaciones Aga de Saltillo        ║
-║                                                       ║
-╚═══════════════════════════════════════════════════════╝
++==========================================================+
+|                                                          |
+|       Valueflow Middleware                                |
+|       Aspel SAE <-> Siemens PoSi Portal                  |
+|                                                          |
+|       Instalador v2.0 (todo-en-uno)                      |
+|       VCorp - Representaciones Aga de Saltillo           |
+|                                                          |
++==========================================================+
 "@
 Write-Host $LogoText -ForegroundColor Cyan
 
-# ===== Verificar permisos de administrador =====
+# ===== 1. Verificar permisos de administrador =====
 Write-Step "Verificando permisos de administrador..."
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Err "Este instalador requiere permisos de administrador."
-    Write-Host "  Por favor, ejecuta como administrador (clic derecho → Ejecutar como administrador)"
+    Write-Host "  Clic derecho sobre el archivo .exe -> Ejecutar como administrador" -ForegroundColor Yellow
     pause
     exit 1
 }
-Write-OK "Permisos de administrador OK"
+Write-OK "Permisos OK"
 
-# ===== Detectar/Descargar Node.js 20 LTS =====
-Write-Step "Verificando Node.js..."
-
+# ===== 2. Verificar Node.js 20 LTS =====
+Write-Step "Verificando Node.js 20 LTS..."
 $nodeExe = (Get-Command node -ErrorAction SilentlyContinue).Source
-$nodeVersionInstalled = $null
-
+$nodeVersion = $null
 if ($nodeExe) {
-    $nodeVersionInstalled = & node --version 2>&1
-    Write-OK "Node.js ya instalado: $nodeVersionInstalled"
+    $nodeVersion = & node --version
+    Write-OK "Node.js instalado: $nodeVersion"
 } else {
-    Write-Warn "Node.js no detectado. Se descargará versión $NodeVersion..."
-
-    $nodeMsiUrl = "https://nodejs.org/dist/v$NodeVersion/node-v$NodeVersion-x64.msi"
-    $nodeMsiPath = "$env:TEMP\node-installer.msi"
-
-    try {
-        Write-Host "  Descargando desde $nodeMsiUrl"
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri $nodeMsiUrl -OutFile $nodeMsiPath -UseBasicParsing
-        Write-OK "Descarga completa"
-
-        Write-Host "  Instalando Node.js (silencioso)..."
-        $installArgs = "/i `"$nodeMsiPath`" /quiet /norestart ADDLOCAL=ALL"
-        $installProcess = Start-Process -FilePath "msiexec.exe" -ArgumentList $installArgs -Wait -PassThru
-
-        if ($installProcess.ExitCode -ne 0) {
-            Write-Err "Falló la instalación de Node.js (código: $($installProcess.ExitCode))"
-            pause
-            exit 1
-        }
-
-        # Refrescar PATH
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-
-        # Verificar instalación
-        Start-Sleep -Seconds 2
-        $nodeExe = (Get-Command node -ErrorAction SilentlyContinue).Source
-        if ($nodeExe) {
-            $nodeVersionInstalled = & node --version
-            Write-OK "Node.js instalado: $nodeVersionInstalled"
-        } else {
-            Write-Err "Node.js instalado pero no detectable. Reinicia e intenta de nuevo."
-            pause
-            exit 1
-        }
-    } catch {
-        Write-Err "Error descargando/instalando Node.js: $_"
-        pause
-        exit 1
-    }
+    Write-Err "============================================================"
+    Write-Err "  PREREQUISITO FALTANTE: Node.js 20 LTS"
+    Write-Err "============================================================"
+    Write-Host ""
+    Write-Host "  Pasos para instalar:" -ForegroundColor Yellow
+    Write-Host "  1. Abrir navegador en: https://nodejs.org/dist/v20.14.0/" -ForegroundColor Yellow
+    Write-Host "  2. Descargar 'node-v20.14.0-x64.msi' (~30 MB)"
+    Write-Host "  3. Doble click, Next > Next > Install (todo por defecto)"
+    Write-Host "  4. ABRIR PowerShell NUEVO y volver a ejecutar este instalador"
+    Write-Host ""
+    Write-Host "  Si ya esta instalado pero no se detecta, abre PowerShell como admin" -ForegroundColor Yellow
+    Write-Host "  y verifica con: where.exe node" -ForegroundColor Yellow
+    Write-Host ""
+    pause
+    exit 2
 }
 
-# Verificar versión mínima
-$nodeMajor = ($nodeVersionInstalled -replace 'v','').Split('.')[0]
+$nodeMajor = ($nodeVersion -replace 'v','').Split('.')[0]
 if ([int]$nodeMajor -lt 20) {
-    Write-Warn "Se recomienda Node.js 20 LTS o superior. Versión actual: $nodeVersionInstalled"
+    Write-Warn "Se recomienda Node.js 20 LTS. Actual: $nodeVersion. La instalacion continuara pero pueden haber problemas."
 }
 
-# ===== Crear directorio de instalación =====
-Write-Step "Creando directorio de instalación: $InstallDir"
+# ===== 3. Leer credenciales del archivo temporal =====
+Write-Step "Leyendo credenciales..."
+$ConfigFile = Join-Path $env:TEMP "valueflow_install_config.ini"
+if (Test-Path $ConfigFile) {
+    Write-OK "Credenciales recibidas del wizard del instalador"
+    $IniContent = Get-Content $ConfigFile -Raw
+    $FirebirdDBPath = if ($IniContent -match "FIREBIRD_DB_PATH=(.+)") { $matches[1].Trim() } else { "" }
+    $SiemensAPIKey = if ($IniContent -match "SIEMENS_API_KEY=(.+)") { $matches[1].Trim() } else { "" }
+    $UIPasswordPlain = if ($IniContent -match "UI_PASSWORD=(.+)") { $matches[1].Trim() } else { "" }
+    Remove-Item $ConfigFile -Force -ErrorAction SilentlyContinue
+} else {
+    Write-Warn "No se encontro archivo de credenciales (ejecutado sin Inno Setup)"
+    Write-Host "  Ingrese los parametros manualmente:"
+    $FirebirdDBPath = Read-Host "  Ruta del archivo .FDB de Aspel SAE"
+    $SiemensAPIKey = Read-Host "  API Key de Siemens PoSi"
+    $UIPasswordPlain = Read-Host "  Contrasena para la UI web (min 8 caracteres)" -AsSecureString
+    $UIPasswordPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($UIPasswordPlain))
+}
+
+# Validar credenciales
+if ($FirebirdDBPath -eq "" -or !(Test-Path $FirebirdDBPath)) {
+    Write-Err "Ruta de BD no valida: '$FirebirdDBPath'"
+    Write-Host "  Verifique que el archivo .FDB existe en esa ubicacion" -ForegroundColor Yellow
+    pause
+    exit 3
+}
+Write-OK "BD Aspel encontrada: $FirebirdDBPath"
+
+if ($SiemensAPIKey -eq "" -or $SiemensAPIKey.Length -lt 32) {
+    Write-Err "API Key invalida (debe tener minimo 32 caracteres)"
+    pause
+    exit 3
+}
+Write-OK "API Key Siemens recibida (longitud: $($SiemensAPIKey.Length))"
+
+if ($UIPasswordPlain -eq "" -or $UIPasswordPlain.Length -lt 8) {
+    Write-Err "Contrasena UI muy corta (minimo 8 caracteres)"
+    pause
+    exit 3
+}
+Write-OK "Contrasena UI recibida (longitud: $($UIPasswordPlain.Length))"
+
+# ===== 4. Crear directorio de instalacion =====
+Write-Step "Creando directorio: $InstallDir"
 if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 }
 Write-OK "Directorio listo"
 
-# ===== Copiar archivos del middleware =====
+# ===== 5. Copiar archivos del middleware desde bundle =====
 Write-Step "Copiando archivos del middleware..."
-
-# Si hay un tarball del middleware en la misma carpeta, extraer
-$middlewareTarball = Join-Path $SourceDir "middleware.tar.gz"
-if (Test-Path $middlewareTarball) {
-    Write-Host "  Extrayendo desde $middlewareTarball"
-    Start-Process tar -ArgumentList "xzf `"$middlewareTarball`" -C `"$InstallDir`" --strip-components=1" -Wait -NoNewWindow
-} else {
-    # Si no, copiar el directorio middleware directamente
-    $sourceMiddleware = Join-Path $SourceDir "..\middleware"
-    if (Test-Path $sourceMiddleware) {
-        Write-Host "  Copiando desde $sourceMiddleware"
-        Copy-Item -Path "$sourceMiddleware\*" -Destination $InstallDir -Recurse -Force
-    } else {
-        Write-Err "No se encontró el código del middleware. Esperado en: $sourceMiddleware"
-        Write-Host "  Coloque el instalador junto a la carpeta 'middleware' del proyecto."
-        pause
-        exit 1
-    }
+$SourceMiddleware = Join-Path $PSScriptRoot "..\middleware"
+if (-not (Test-Path $SourceMiddleware)) {
+    Write-Err "No se encontro el codigo del middleware en: $SourceMiddleware"
+    Write-Host "  El bundle debe contener una carpeta 'middleware' junto a 'installer'." -ForegroundColor Yellow
+    pause
+    exit 4
 }
+Write-Host "  Origen: $SourceMiddleware"
+Write-Host "  Destino: $InstallDir"
+Copy-Item -Path "$SourceMiddleware\*" -Destination $InstallDir -Recurse -Force -Exclude @("node_modules\.bin", "coverage", ".nyc_output", "*.log")
 Write-OK "Archivos copiados"
 
-# ===== Instalar dependencias =====
-Write-Step "Instalando dependencias npm (puede tardar varios minutos)..."
-
+# ===== 6. Instalar dependencias de produccion =====
+Write-Step "Instalando dependencias npm (puede tardar 3-5 min)..."
 Push-Location $InstallDir
 try {
+    $env:npm_config_audit = "false"
     $npmInstall = Start-Process -FilePath "npm.cmd" -ArgumentList "install --production" -Wait -PassThru -NoNewWindow
-    if ($npmInstall.ExitCode -ne 0) {
-        Write-Warn "npm install terminó con código: $($npmInstall.ExitCode)"
-        Write-Host "  Esto puede ser normal en entornos con restricciones."
-    } else {
+    if ($npmInstall.ExitCode -eq 0) {
         Write-OK "Dependencias instaladas"
+    } else {
+        Write-Warn "npm install finalizo con codigo: $($npmInstall.ExitCode)"
+        Write-Host "  Esto puede indicar problemas de red. La instalacion continuara."
     }
 } catch {
     Write-Warn "Error en npm install: $_"
@@ -228,338 +167,163 @@ try {
     Pop-Location
 }
 
-# ===== Compilar TypeScript =====
-Write-Step "Compilando TypeScript..."
-Push-Location $InstallDir
-try {
-    & npm run build 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        Write-OK "Compilación exitosa"
-    } else {
-        Write-Warn "Compilación con warnings. Continuando..."
-    }
-} catch {
-    Write-Warn "Error en compilación: $_"
-} finally {
-    Pop-Location
-}
-
-# ===== Configurar archivos (.env y config.json) =====
-Write-Step "Configurando variables de entorno y operativa..."
-
-# Crear directorios necesarios
-New-Item -ItemType Directory -Path "$InstallDir\logs" -Force | Out-Null
-New-Item -ItemType Directory -Path "$InstallDir\public" -Force | Out-Null
-
-# Solicitar credenciales al usuario (modo interactivo) o usar vars de entorno (modo -Silent)
-if ($Silent) {
-    Write-Host "`n  Modo SILENT: leyendo credenciales de variables de entorno..." -ForegroundColor Cyan
-    $firebirdPasswordPlain = $env:FIREBIRD_PASSWORD
-    if (-not $firebirdPasswordPlain) {
-        Write-Err "FIREBIRD_PASSWORD no definida. En modo -Silent debe estar en el entorno."
-        exit 1
-    }
-    $uiPasswordPlain = if ($UiPasswordPlain -ne "") { $UiPasswordPlain } else { $env:UI_PASSWORD_PLAIN }
-    if (-not $uiPasswordPlain) {
-        Write-Err "UI_PASSWORD_PLAIN no definida (ni -UiPasswordPlain). En modo -Silent debe estar en el entorno."
-        exit 1
-    }
-    if ($uiPasswordPlain.Length -lt 8) {
-        Write-Err "UI_PASSWORD_PLAIN debe tener mínimo 8 caracteres."
-        exit 1
-    }
-} else {
-    Write-Host "`n  Configuración de credenciales:" -ForegroundColor Cyan
-
-    # Password de Firebird
-    $secureFirebirdPassword = Read-Host "  Password de Firebird (solo lectura)" -AsSecureString
-    $firebirdPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureFirebirdPassword)
-    )
-
-    # Password de UI
-    $secureUIPassword = Read-Host "  Password para acceso a la UI (mín. 8 caracteres)" -AsSecureString
-    $uiPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureUIPassword)
-    )
-}
-
-# Verificar BD detectada (si no se encontró, pedirla)
-if ($FirebirdDBPath -eq "") {
-    Write-Warn "No se detectó BD Aspel en rutas comunes (C:\Program Files\Aspel, C:\SAE, D:\Aspel)."
-    Write-Host "  Rutas intentadas:" -ForegroundColor Gray
-    foreach ($r in @("C:\Program Files\Aspel", "C:\SAE", "D:\Aspel", (Join-Path $PSScriptRoot "..\middleware"))) {
-        Write-Host "    - $r" -ForegroundColor Gray
-    }
-    if ($Silent) {
-        Write-Err "En modo -Silent debe especificar -FirebirdDBPathOverride."
-        exit 1
-    }
-    $manualPath = Read-Host "  Ruta completa al archivo .FDB de Aspel SAE (ej: C:\Aspel\SAE90EMPRE01.FDB)"
-    if (-not (Test-Path $manualPath)) {
-        Write-Err "El archivo '$manualPath' no existe. Abortando."
-        exit 1
-    }
-    $FirebirdDBPath = $manualPath
-}
-
-# Generar hash bcrypt para UI
-Write-Host "  Generando hash bcrypt para UI..."
-$bcryptHash = & node -e "console.log(require('bcryptjs').hashSync('$uiPasswordPlain', 12))"
-
-# Crear .env
-# En modo -Silent, si SIEMENS_API_KEY está en el entorno, se usa tal cual;
-# si no, queda el placeholder que el operador debe reemplazar manualmente.
-if ($Silent -and $env:SIEMENS_API_KEY) {
-    $siemensApiKeyValue = $env:SIEMENS_API_KEY
-} else {
-    $siemensApiKeyValue = "<api_key_real_de_qua>"
-}
+# ===== 7. Configurar .env =====
+Write-Step "Configurando variables de entorno (.env)..."
+$envPath = Join-Path $InstallDir ".env"
 $envContent = @"
-# Generado por instalador el $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-
-# Firebird
-FIREBIRD_PASSWORD=$firebirdPasswordPlain
-
-# API Key de Siemens (sandbox QUA inicial). El valor real se inyecta aquí;
-# config.json solo guarda el marcador literal 'env:SIEMENS_API_KEY'.
-# Para PRD, reemplazar por la key de producción antes del primer envío.
-SIEMENS_API_KEY=$siemensApiKeyValue
-
-# UI
+FIREBIRD_PASSWORD=masterkey
+SIEMENS_API_KEY=$SiemensAPIKey
 UI_PORT=$UIPort
 UI_USERNAME=admin
-UI_PASSWORD_HASH=$bcryptHash
-
-# Logging
 LOG_LEVEL=info
-LOG_DIR=$InstallDir\logs
-
-# data_source: production (cliente Windows, datos reales) | qa (testing) | demo (sintético)
-DATA_SOURCE=demo
+LOG_DIR=logs
 "@
-$envContent | Out-File -FilePath "$InstallDir\.env" -Encoding UTF8 -NoNewline
-Write-OK ".env creado"
-if ($siemensApiKeyValue -eq "<api_key_real_de_qua>") {
-    Write-Warn "Recuerde reemplazar SIEMENS_API_KEY=<api_key_real_de_qua> en .env con la clave real antes del primer envío."
-}
+Set-Content -Path $envPath -Value $envContent -Force
+Write-OK ".env configurado"
 
-Write-Host ""
-Write-Host "  IMPORTANTE: Para PRODUCCION, edite el archivo .env y cambie:" -ForegroundColor Yellow
-Write-Host "    DATA_SOURCE=demo"
-Write-Host "  Por:"
-Write-Host "    DATA_SOURCE=production" -ForegroundColor Green
-Write-Host "  (ubicacion: $InstallDir\.env)" -ForegroundColor Gray
-Write-Host ""
-
-# Crear config.json desde ejemplo
-$configExample = Get-Content "$InstallDir\config.json.example" -Raw | ConvertFrom-Json
-
-# Actualizar rutas con valores del instalador
-$configExample.firebird.db_path = $FirebirdDBPath
-$configExample.firebird.user = $FirebirdUser
-$configExample.siemens.environment = $SiemensEnvironment
-$configExample.siemens.distributor_sender_id = $DistributorSenderID
-
-$configExample | ConvertTo-Json -Depth 10 | Out-File -FilePath "$InstallDir\config.json" -Encoding UTF8 -NoNewline
+# ===== 8. Configurar config.json =====
+Write-Step "Configurando operativa (config.json)..."
+$configPath = Join-Path $InstallDir "config.json"
+$FirebirdUser = "SYSDBA"
+$configContent = @{
+    siemens = @{
+        base_url = "https://api.pos.siemens.com"
+        api_key = "env:SIEMENS_API_KEY"
+        environment = "qua"
+        distributor_sender_id = "MX-REPRESENTACIONES"
+    }
+    firebird = @{
+        db_path = $FirebirdDBPath
+        user = $FirebirdUser
+        password_source = "env:FIREBIRD_PASSWORD"
+    }
+    schedules = @{
+        inventory = @{ enabled = $true; cron = "0 2 * * *"; timezone = "America/Mexico_City" }
+        sales = @{ enabled = $true; cron = "0 3 * * *"; timezone = "America/Mexico_City" }
+    }
+    batch_size = 3000
+    siemens_line_filter = @{
+        enabled = $true
+        lines = @("BAJA","SINU","SIMAT","LP","DRIVE","MOTOR","SINUM","SERVI","OBSO","SENSO","SERVO","INSTR","UPS","SIMA","ESPE")
+        include_inactive_products = $true
+    }
+} | ConvertTo-Json -Depth 10
+Set-Content -Path $configPath -Value $configContent -Force
 Write-OK "config.json configurado"
 
-# Limpiar password en memoria
-$firebirdPasswordPlain = $null
-$uiPasswordPlain = $null
-[System.GC]::Collect()
+# Hashear password UI
+Write-Host "  Generando hash bcrypt para contrasena UI..."
+try {
+    Push-Location $InstallDir
+    $bcryptHash = node -e "const b = require('bcryptjs'); console.log(b.hashSync(process.argv[1], 12));" $UIPasswordPlain 2>&1
+    Pop-Location
 
-# ===== Instalar PM2 y configurar como Servicio Windows =====
-Write-Step "Instalando PM2 y configurando como Servicio Windows..."
+    # Leer .env actual y actualizar UI_PASSWORD_HASH
+    $envContent = Get-Content $envPath -Raw
+    $envContent = $envContent -replace "(?ms)^UI_PASSWORD_HASH=.*$", "UI_PASSWORD_HASH=$bcryptHash"
+    Set-Content -Path $envPath -Value $envContent -Force
+    Write-OK "UI_PASSWORD_HASH generado"
+} catch {
+    Write-Warn "No se pudo hashear la contrasena: $_"
+    Write-Host "  Puedes cambiarla despues desde la UI en /config" -ForegroundColor Yellow
+}
 
+# ===== 9. Instalar PM2 globalmente (ya viene en npm pero requiere -g) =====
+Write-Step "Verificando PM2 (gestor de procesos)..."
 $pm2Exe = (Get-Command pm2 -ErrorAction SilentlyContinue).Source
 if (-not $pm2Exe) {
-    Write-Host "  Instalando PM2 globalmente..."
-    & npm install -g pm2 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Err "Falló instalación de PM2"
-        pause
-        exit 1
-    }
-    Write-OK "PM2 instalado"
-} else {
-    Write-OK "PM2 ya instalado: $pm2Exe"
-}
-
-# Instalar pm2-windows-startup
-Write-Host "  Instalando pm2-windows-startup..."
-& npm install -g pm2-windows-startup 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Warn "Falló instalación de pm2-windows-startup (puede no ser crítico)"
-}
-
-# Registrar como Servicio Windows
-Write-Host "  Registrando como Servicio Windows..."
-& pm2-startup install 2>&1 | Out-Null
-
-# Iniciar el middleware
-Write-Host "  Iniciando middleware con PM2..."
-Push-Location $InstallDir
-try {
-    & pm2 start ecosystem.config.js 2>&1 | Out-Null
-    & pm2 save 2>&1 | Out-Null
-    Write-OK "Middleware registrado en PM2"
-} catch {
-    Write-Warn "Error iniciando con PM2: $_"
-} finally {
-    Pop-Location
-}
-
-# ===== Excluir del antivirus (Windows Defender) =====
-Write-Step "Excluyendo del antivirus (Windows Defender)..."
-
-$defenderPaths = @(
-    $InstallDir,
-    "$InstallDir\node_modules",
-    "$InstallDir\logs",
-    "C:\Program Files\nodejs"
-)
-
-foreach ($path in $defenderPaths) {
+    Write-Warn "PM2 no detectado. Instalando globalmente..."
+    Push-Location $InstallDir
     try {
-        Add-MpPreference -ExclusionPath $path -ErrorAction SilentlyContinue
-        Write-OK "Excluido: $path"
-    } catch {
-        Write-Warn "No se pudo excluir: $path (requiere permisos elevados o Defender deshabilitado)"
-    }
-}
-
-# ===== Crear acceso directo en el escritorio =====
-Write-Step "Creando acceso directo en el escritorio..."
-
-$desktopPath = [Environment]::GetFolderPath("Desktop")
-$shortcutPath = Join-Path $desktopPath "Valueflow Middleware.lnk"
-
-$WshShell = New-Object -comObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut($shortcutPath)
-$Shortcut.TargetPath = "http://localhost:$UIPort"
-$Shortcut.IconLocation = "$InstallDir\public\partner.png,0"
-$Shortcut.Description = "Valueflow Middleware - UI de administración"
-$Shortcut.WorkingDirectory = $InstallDir
-$Shortcut.WindowStyle = 1
-$Shortcut.Save()
-Write-OK "Acceso directo creado: $shortcutPath"
-
-# ===== Crear entrada en Menú Inicio =====
-$startMenu = [Environment]::GetFolderPath("StartMenu")
-$programsFolder = Join-Path $startMenu "Programs"
-$appFolder = Join-Path $programsFolder "Valueflow Middleware"
-if (-not (Test-Path $appFolder)) {
-    New-Item -ItemType Directory -Path $appFolder -Force | Out-Null
-}
-
-# Acceso directo en Menú Inicio
-$startShortcut = $WshShell.CreateShortcut((Join-Path $appFolder "Valueflow Middleware UI.lnk"))
-$startShortcut.TargetPath = "http://localhost:$UIPort"
-$startShortcut.IconLocation = "$InstallDir\public\partner.png,0"
-$startShortcut.Description = "Abrir UI de administración"
-$startShortcut.Save()
-Write-OK "Entrada en Menú Inicio creada"
-
-# Script de desinstalación
-$uninstallScript = @"
-#Requires -RunAsAdministrator
-# Desinstalador de Valueflow Middleware
-
-Write-Host "Desinstalando Valueflow Middleware..." -ForegroundColor Cyan
-
-# Detener y eliminar de PM2
-pm2 stop siemens-middleware 2>`$null
-pm2 delete siemens-middleware 2>`$null
-pm2 save 2>`$null
-pm2-startup uninstall 2>`$null
-
-# Eliminar servicio Windows
-Stop-Service siemens-middleware -ErrorAction SilentlyContinue
-sc.exe delete siemens-middleware 2>`$null
-
-# Eliminar accesos directos
-Remove-Item "`$env:USERPROFILE\Desktop\Valueflow Middleware.lnk" -ErrorAction SilentlyContinue
-Remove-Item "$startMenu\Programs\Valueflow Middleware" -Recurse -ErrorAction SilentlyContinue
-
-# Eliminar directorio
-Remove-Item "$InstallDir" -Recurse -Force
-
-Write-Host "Desinstalación completa." -ForegroundColor Green
-pause
-"@
-$uninstallPath = Join-Path $appFolder "Desinstalar.bat"
-$uninstallScript | Out-File -FilePath $uninstallPath -Encoding ASCII
-Write-OK "Desinstalador creado: $uninstallPath"
-
-# ===== Verificar instalación =====
-Write-Step "Verificando instalación..."
-
-# Mostrar modo de operacion segun DATA_SOURCE
-$envFile = "$InstallDir\.env"
-if (Test-Path $envFile) {
-    $dataSourceLine = Select-String -Path $envFile -Pattern "^DATA_SOURCE=" -ErrorAction SilentlyContinue
-    if ($dataSourceLine) {
-        $dataSource = ($dataSourceLine.Line -split "=", 2)[1].Trim().ToLower()
-        if ($dataSource -eq "production") {
-            Write-OK "Modo PRODUCCION activado (datos reales desde Aspel SAE 10)" -ForegroundColor Green
-        } elseif ($dataSource -eq "qa") {
-            Write-Host "  ✓ Modo QA activado (datos de testing)" -ForegroundColor Cyan
+        npm install -g pm2 pm2-windows-startup 2>&1 | Out-Null
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+        if ((Get-Command pm2 -ErrorAction SilentlyContinue).Source) {
+            Write-OK "PM2 instalado"
         } else {
-            Write-Host "  ! Modo DEMO activado (datos sinteticos)" -ForegroundColor Yellow
-            Write-Host "    Para PRODUCCION, cambie DATA_SOURCE=production en .env" -ForegroundColor Yellow
+            Write-Warn "PM2 instalado pero no detectable. Continuando..."
         }
+    } catch {
+        Write-Warn "Error instalando PM2: $_"
+    } finally {
+        Pop-Location
     }
+} else {
+    Write-OK "PM2 ya instalado"
 }
 
-Start-Sleep -Seconds 3
-
+# ===== 10. Registrar como servicio de Windows =====
+Write-Step "Configurando como servicio de Windows..."
 try {
-    $test = Invoke-WebRequest -Uri "http://localhost:$UIPort" -UseBasicParsing -Headers @{"Authorization" = "Basic " + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("admin:test"))} -TimeoutSec 5 -ErrorAction Stop
-    Write-OK "Middleware respondiendo en puerto $UIPort (HTTP $($test.StatusCode))"
-} catch {
-    $statusCode = $_.Exception.Response.StatusCode.value__ -as [int]
-    if ($statusCode -eq 401) {
-        Write-OK "Middleware respondiendo correctamente (HTTP 401 - autenticación requerida, como se esperaba)"
+    Push-Location $InstallDir
+    pm2 start ecosystem.config.js --name siemens-middleware 2>&1 | Out-Null
+    pm2 save 2>&1 | Out-Null
+
+    # Instalar como servicio Windows (auto-arranque)
+    $pm2Startup = Get-Command pm2-startup -ErrorAction SilentlyContinue
+    if ($pm2Startup) {
+        pm2-startup install 2>&1 | Out-Null
+        Write-OK "Servicio Windows instalado (auto-arranque habilitado)"
     } else {
-        Write-Warn "Middleware no responde aún. Puede tardar unos segundos en arrancar."
+        Write-Warn "pm2-startup no disponible - usando pm2 save (servicio manual)"
     }
+    Pop-Location
+} catch {
+    Write-Warn "Error configurando PM2: $_"
 }
 
-# ===== Resumen final =====
-Write-Host "`n"
-Write-Host "╔═══════════════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║                                                       ║" -ForegroundColor Green
-Write-Host "║       INSTALACIÓN COMPLETADA                          ║" -ForegroundColor Green
-Write-Host "║                                                       ║" -ForegroundColor Green
-Write-Host "╚═══════════════════════════════════════════════════════╝" -ForegroundColor Green
-Write-Host ""
-Write-Host "  Instalado en: $InstallDir" -ForegroundColor White
-Write-Host "  UI disponible en: http://localhost:$UIPort" -ForegroundColor White
-Write-Host "  Usuario UI: admin" -ForegroundColor White
-Write-Host "  Contraseña UI: (la que ingresaste)" -ForegroundColor White
-Write-Host ""
-Write-Host "  Accesos directos creados:" -ForegroundColor White
-Write-Host "    • Escritorio: Valueflow Middleware.lnk" -ForegroundColor Gray
-Write-Host "    • Menú Inicio: Valueflow Middleware" -ForegroundColor Gray
-Write-Host ""
-Write-Host "  Próximos pasos:" -ForegroundColor White
-Write-Host "    1. Abre la UI desde el acceso directo del escritorio" -ForegroundColor Gray
-Write-Host "    2. Configura la API Key de Siemens en /config" -ForegroundColor Gray
-Write-Host "    3. Prueba conexión con 'Test conexión Siemens' en /actions" -ForegroundColor Gray
-Write-Host "    4. Los jobs automáticos corren a las 02:00 (inventario) y 03:00 (ventas)" -ForegroundColor Gray
-Write-Host ""
-Write-Host "  Comandos útiles:" -ForegroundColor White
-Write-Host "    pm2 status                    - ver estado del servicio" -ForegroundColor Gray
-Write-Host "    pm2 logs siemens-middleware   - ver logs en tiempo real" -ForegroundColor Gray
-Write-Host "    pm2 restart siemens-middleware - reiniciar servicio" -ForegroundColor Gray
-Write-Host ""
+# ===== 11. Crear acceso directo en escritorio =====
+Write-Step "Creando acceso directo al escritorio..."
+$shell = New-Object -ComObject WScript.Shell
+$desktop = [System.Environment]::GetFolderPath("Desktop")
+$shortcut = $shell.CreateShortcut("$desktop\Valueflow Middleware.lnk")
+$shortcut.TargetPath = "https://localhost:$UIPort"
+$shortcut.WorkingDirectory = $InstallDir
+$shortcut.IconLocation = Join-Path $InstallDir "public\logo_aga_letras_2.png"
+$shortcut.Save()
+Write-OK "Acceso directo creado"
 
-# Preguntar si abrir la UI
-$openUI = Read-Host "¿Abrir la UI en el navegador ahora? (S/N)"
-if ($openUI -eq "S" -or $openUI -eq "s" -or $openUI -eq "Y" -or $openUI -eq "y") {
-    Start-Process "http://localhost:$UIPort"
+# ===== 12. Verificacion final =====
+Write-Step "Verificando instalacion..."
+Start-Sleep -Seconds 3
+try {
+    Push-Location $InstallDir
+    $pm2List = pm2 list 2>&1
+    if ($pm2List -match "siemens-middleware.*online") {
+        Write-OK "Servicio corriendo correctamente"
+    } else {
+        Write-Warn "El servicio puede no estar corriendo. Verificar con: pm2 status"
+    }
+    Pop-Location
+} catch {
+    Write-Warn "No se pudo verificar PM2: $_"
 }
 
-Write-Host "`n  Presiona Enter para salir..."
-$null = Read-Host
+# Probar la UI
+try {
+    $response = Invoke-WebRequest -Uri "https://localhost:$UIPort/api/health" -UseBasicParsing -TimeoutSec 5 -ErrorAction SilentlyContinue
+    if ($response.StatusCode -eq 200) {
+        Write-OK "UI respondiendo en https://localhost:$UIPort"
+    }
+} catch {
+    Write-Warn "UI aun no responde. Puede tardar 10-20 segundos en arrancar. Verificar en navegador."
+}
+
+# ===== Resumen =====
+Write-Host ""
+Write-Host "================================================================" -ForegroundColor Green
+Write-Host "  INSTALACION COMPLETADA EXITOSAMENTE" -ForegroundColor Green
+Write-Host "================================================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "  UI del middleware: https://localhost:$UIPort" -ForegroundColor White
+Write-Host "  Acceso directo: $([System.Environment]::GetFolderPath('Desktop'))\Valueflow Middleware.lnk"
+Write-Host "  Para cambiar la API Key (sandbox -> productivo):" -ForegroundColor Yellow
+Write-Host "    1. Abrir https://localhost:$UIPort" -ForegroundColor Yellow
+Write-Host "    2. Login con admin / (tu contrasena)" -ForegroundColor Yellow
+Write-Host "    3. Ir a Configuracion > API Key Siemens > Actualizar" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "  Comandos utiles:" -ForegroundColor Cyan
+Write-Host "    pm2 status                - Ver estado del servicio" -ForegroundColor Gray
+Write-Host "    pm2 logs siemens-middleware  - Ver logs en tiempo real" -ForegroundColor Gray
+Write-Host "    pm2 restart siemens-middleware - Reiniciar servicio" -ForegroundColor Gray
+Write-Host ""
+Read-Host "  Presiona ENTER para cerrar"

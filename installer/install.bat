@@ -1,44 +1,55 @@
 @echo off
 :: ============================================
-:: Valueflow Middleware - Instalador
-:: Launcher con elevación automática de permisos
+:: Valueflow Middleware - Lanzador de instalador
+:: Ejecuta install.ps1 con permisos de admin.
+:: Llamado por:
+::   - Inno Setup [Run] section (install.ps1 ya copiado)
+::   - Doble click por usuario final
 :: ============================================
 
-:: Verificar si ya somos admin
+setlocal
+set "SCRIPT_DIR=%~dp0"
+set "PS_SCRIPT=%SCRIPT_DIR%install.ps1"
+
+if not exist "%PS_SCRIPT%" (
+    echo.
+    echo ============================================================
+    echo  ERROR: No se encontro install.ps1
+    echo  Ruta esperada: %PS_SCRIPT%
+    echo ============================================================
+    echo.
+    pause
+    exit /b 1
+)
+
+:: Verificar permisos de administrador (necesarios para PM2, firewall, etc.)
 net session >nul 2>&1
 if %errorlevel% neq 0 (
-    :: No somos admin - solicitar elevación
-    echo.
-    echo ============================================================
-    echo  Solicitando permisos de administrador...
-    echo  Se abrira una ventana de UAC - selecciona "Si"
-    echo ============================================================
-    echo.
-
-    :: Crear script temporal para elevación
-    set "elevate_script=%temp%\valueflow_elevate_%random%.bat"
-
-    > "%elevate_script%" echo @echo off
-    >> "%elevate_script%" echo cd /d "%~dp0"
-    >> "%elevate_script%" echo powershell.exe -NoProfile -ExecutionPolicy Bypass -File "install.ps1"
-
-    :: Lanzar con elevación
-    powershell -Command "Start-Process -FilePath '%elevate_script%' -Verb RunAs -Wait"
-
-    :: Limpiar
-    del "%elevate_script%" 2>nul
-
-    echo.
-    echo Instalacion finalizada. Esta ventana se cerrara automaticamente.
-    timeout /t 5 >nul
+    :: No somos admin - relanzar con elevación via PowerShell
+    set "ELEV_PS=%TEMP%\valueflow_elevate_%RANDOM%.ps1"
+    >  "%ELEV_PS%" echo $cmd = '"%~f0"'
+    >> "%ELEV_PS%" echo Start-Process -FilePath $cmd -Verb RunAs -Wait
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%ELEV_PS%"
+    del "%ELEV_PS%" 2>nul
 ) else (
-    :: Ya somos admin - ejecutar directamente
-    echo Ejecutando instalador con permisos de administrador...
-    cd /d "%~dp0"
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "install.ps1"
-    if %errorlevel% neq 0 (
+    :: Ya somos admin - ejecutar install.ps1 directamente
+    echo ============================================================
+    echo  Valueflow Middleware - Instalador
+    echo ============================================================
+    echo.
+    pushd "%SCRIPT_DIR%"
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PS_SCRIPT%" %*
+    set "RC=%errorlevel%"
+    popd
+    if not "%RC%"=="0" (
         echo.
-        echo ERROR: La instalacion fallo. Codigo: %errorlevel%
-        pause
+        echo ============================================================
+        echo  Instalacion finalizo con errores. Codigo: %RC%
+        echo ============================================================
+    ) else (
+        echo.
+        echo Instalacion completada.
     )
+    timeout /t 5 >nul
+    exit /b %RC%
 )

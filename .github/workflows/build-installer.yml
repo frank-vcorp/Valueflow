@@ -50,7 +50,7 @@ jobs:
       - name: 📁 Verificar estructura
         run: |
           [ -d "middleware" ] || { echo "::error::middleware/ missing"; exit 1; }
-          [ -d "assets" ] || { echo "::error::assets/ missing"; exit 1; }
+          [ -d "middleware/public" ] || { echo "::error::middleware/public/ missing (logos del cliente)"; exit 1; }
           [ -f "installer/installer.iss" ] || { echo "::error::installer/installer.iss missing"; exit 1; }
           [ -f "installer/install.ps1" ] || { echo "::error::installer/install.ps1 missing"; exit 1; }
           [ -f "installer/install.bat" ] || { echo "::error::installer/install.bat missing"; exit 1; }
@@ -154,21 +154,41 @@ jobs:
           body: |
             ## 🎉 Valueflow Middleware - Instalador para Windows
 
-            **Instalador profesional** generado automáticamente.
+            **Instalador profesional TODO-EN-UNO** con wizard de 3 campos.
 
-            ### 📦 Instalación
-            1. Descarga `Valueflow-Setup-v1.0.exe`
-            2. Doble click para ejecutar
-            3. Sigue el wizard (Next → Next → Install)
-            4. Ingresa credenciales cuando se solicite
+            ### 📦 Instalación (3 pasos)
+            1. Descarga `Valueflow-Setup-v1.0.exe` desde abajo
+            2. Doble click → wizard Next → Next → Install
+            3. **Wizard de credenciales** te pedirá:
+               - Ruta del archivo .FDB de Aspel SAE (con autodetección)
+               - API Key de Siemens PoSi (sandbox QUA pre-cargada; cambia desde la UI para producción)
+               - Contraseña para la UI web de administración
 
             ### 🔧 Requisitos
-            - Windows 10/11 o Windows Server 2019+
-            - Aspel SAE 10 instalado (incluye `fbclient.dll`)
-            - Permisos de administrador
+            - **Windows 10/11 o Windows Server 2019+** (64-bit)
+            - **Node.js 20 LTS** ([descargar aquí](https://nodejs.org/dist/v20.14.0/node-v20.14.0-x64.msi) si no está instalado — el instalador lo detecta y avisa)
+            - Aspel SAE 9.0/10.0 instalado (incluye `fbclient.dll`)
+            - Permisos de administrador (UAC lo solicita automáticamente)
+            - Conexión a Internet SOLO para `npm install --production` (~30 segundos, descarga 30 MB de dependencias)
+
+            ### 🔄 Cambiar API Key QUA → Productivo
+            Después de instalar, puedes cambiar la API Key desde la UI:
+            1. Abrir https://localhost:4567
+            2. Login con `admin` / tu contraseña
+            3. Ir a **Configuración → API Key Siemens → Actualizar**
+            4. Pegar tu API Key productiva
+            5. El servicio se reinicia automáticamente
+
+            ### 📋 Comandos útiles post-instalación
+            ```powershell
+            pm2 status                  # Estado del servicio
+            pm2 logs siemens-middleware # Logs en tiempo real
+            pm2 restart siemens-middleware
+            ```
 
             ---
-            🤖 Generado automáticamente por Docker + Inno Setup
+
+            🤖 Generado automáticamente por GitHub Actions + Docker + Inno Setup
 
       # ============================================
       # 7. Resumen
