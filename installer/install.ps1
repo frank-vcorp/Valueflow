@@ -436,21 +436,54 @@ if ($pm2Path) {
     Write-Log "Arrancando middleware via PM2 ($pm2Path)..." 'INFO'
     Set-Location $destMiddleware
 
-    Start-Process -FilePath $pm2Path -ArgumentList 'delete','all' -Wait -PassThru -NoNewWindow | Out-Null
+    Write-Log 'Directorio de PM2: ' $destMiddleware 'INFO'
 
-    $startProcess = Start-Process -FilePath $pm2Path -ArgumentList 'start','ecosystem.config.js' -Wait -PassThru -NoNewWindow
+    # Verificar que ecosystem.config.js existe
+    $ecoFile = Join-Path $destMiddleware 'ecosystem.config.js'
+    if (-not (Test-Path $ecoFile)) {
+        Write-Log "ERROR: ecosystem.config.js no existe en $destMiddleware" 'ERROR'
+        Invoke-Rollback
+        exit 8
+    }
+    Write-Log "ecosystem.config.js encontrado" 'INFO'
 
-    Start-Sleep -Seconds 5
+    # Verificar que dist/index.js existe
+    $indexFile = Join-Path $destMiddleware 'dist/index.js'
+    if (-not (Test-Path $indexFile)) {
+        Write-Log "ERROR: dist/index.js no existe en $destMiddleware" 'ERROR'
+        Invoke-Rollback
+        exit 8
+    }
+    Write-Log "dist/index.js encontrado" 'INFO'
 
+    # Eliminar instancias anteriores
+    Write-Log 'Eliminando instancias PM2 anteriores...' 'INFO'
+    $delOutput = cmd /c "cd /d `"$destMiddleware`" && `"$pm2Path`" delete all 2>&1"
+    Write-Log "Salida delete: $delOutput" 'INFO'
+
+    # Arrancar el servicio capturando la salida
+    Write-Log 'Iniciando middleware via pm2 start ecosystem.config.js...' 'INFO'
+    $startOutput = cmd /c "cd /d `"$destMiddleware`" && `"$pm2Path`" start ecosystem.config.js 2>&1"
+    Write-Log "Salida start: $startOutput" 'INFO'
+
+    Start-Sleep -Seconds 3
+
+    # Verificar el estado listando los procesos
     $tmpListFile = Join-Path $env:TEMP 'pm2_list_check.txt'
-    Start-Process -FilePath $pm2Path -ArgumentList 'list','--no-color' -Wait -PassThru -NoNewWindow -RedirectStandardOutput $tmpListFile | Out-Null
+    cmd /c "cd /d `"$destMiddleware`" && `"$pm2Path`" list --no-color > `"$tmpListFile`" 2>&1
 
-    $logContent = if (Test-Path $tmpListFile) { Get-Content $tmpListFile -Raw } else { '' }
+    $logContent = ''
+    if (Test-Path $tmpListFile) {
+        $logContent = Get-Content $tmpListFile -Raw
+        Write-Log "Salida pm2 list: $logContent" 'INFO'
+    }
 
     if ($logContent -match 'online') {
         Write-Log 'Servicio arrancado correctamente (online)' 'OK'
     } elseif ($logContent -match 'stopped') {
         Write-Log 'Servicio arranco pero esta stopped - revisar logs' 'WARN'
+    } elseif ($logContent -match 'errored') {
+        Write-Log 'PM2 reporto error - revisar logs manualmente' 'WARN'
     } else {
         Write-Log 'Estado del servicio desconocido - revisar manualmente' 'WARN'
     }
