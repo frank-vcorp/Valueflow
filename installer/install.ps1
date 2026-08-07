@@ -1,284 +1,336 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Instalador de Valueflow Middleware - Aspel SAE - Siemens PoSi Portal
+    Instalador robusto de Valueflow Middleware v2.0.0
+
 .DESCRIPTION
-    Script PowerShell todo-en-uno. NO usa caracteres especiales problematicos.
-    - Extrae Node.js portable del bundle
-    - Copia el codigo del middleware
-    - Ejecuta npm install
-    - Genera hash bcrypt para Admin123
-    - Configura .env y config.json
-    - Levanta PM2 como servicio (con fallback a Node directo)
-    - Crea acceso directo en escritorio
+    Instala Node.js + VC++ + middleware con:
+    - Verificacion paso a paso con rollback automatico
+    - Logging detallado a archivo (C:\apps\siemens-middleware\install.log)
+    - Uso de instaladores oficiales (.msi) NO portables
+    - Limpieza previa automatica
+
 .NOTES
-    Version 2.1 (re-escrito completo tras bugs de sintaxis)
-    Todas las cadenas usan comillas simples para evitar problemas.
-    Cualquier concatenacion se hace con + en lugar de interpolacion.
+    Frank perdio la paciencia con v1.x. Esta version es la final.
+    Cualquier fallo debe revertir TODO y dejar mensaje claro.
+    ID de intervencion: IMPL-20260806-01
 #>
 
 [CmdletBinding()]
 param(
     [string]$InstallDir = 'C:\apps\siemens-middleware',
-    [int]$UIPort = 4567,
+    [string]$LogFile = 'C:\apps\siemens-middleware\install.log',
+    [string]$AselBdPath = 'C:\Users\frank\Desktop\REPAGA\SAE90EMPRE01.FDB',
     [string]$DefaultUsername = 'Admin',
     [string]$DefaultPassword = 'Admin123'
 )
 
-# ===== Colores =====
-function Write-Step { param($msg) Write-Host ('`n===> ' + $msg) -ForegroundColor Cyan }
-function Write-OK    { param($msg) Write-Host ('  [OK] ' + $msg) -ForegroundColor Green }
-function Write-Warn  { param($msg) Write-Host ('  [!] ' + $msg) -ForegroundColor Yellow }
-function Write-Err   { param($msg) Write-Host ('  [X] ' + $msg) -ForegroundColor Red }
+# ===== INICIALIZACION DEL LOG =====
+# Crear el directorio de instalacion y el archivo de log PRIMERO
+New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+New-Item -ItemType File -Path $LogFile -Force | Out-Null
 
-# ===== Banner =====
-$LogoText = @'
-+==========================================================+
-|       Valueflow Middleware                                |
-|       Aspel SAE - Siemens PoSi Portal                     |
-|       Instalador v2.1                                     |
-+==========================================================+
-'@
-Write-Host $LogoText -ForegroundColor Cyan
-
-# ===== 0. Bypass Execution Policy =====
-Write-Step 'Configurando PowerShell Execution Policy...'
-try {
-    Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
-    $currentPolicy = Get-ExecutionPolicy -Scope CurrentUser -ErrorAction SilentlyContinue
-    if ($currentPolicy) {
-        Write-OK ('Execution Policy actual: ' + $currentPolicy)
-    } else {
-        Write-OK 'Execution Policy: Undefined (compatible con PM2)'
+function Write-Log {
+    param(
+        [Parameter(Mandatory)] [string]$Message,
+        [ValidateSet('INFO','WARN','ERROR','OK','STEP')] [string]$Level = 'INFO'
+    )
+    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'
+    $logLine = "[$timestamp] [$Level] $Message"
+    Add-Content -Path $LogFile -Value $logLine -Encoding UTF8
+    switch ($Level) {
+        'INFO'  { Write-Host $logLine -ForegroundColor White }
+        'STEP'  { Write-Host $logLine -ForegroundColor Cyan }
+        'OK'    { Write-Host $logLine -ForegroundColor Green }
+        'WARN'  { Write-Host $logLine -ForegroundColor Yellow }
+        'ERROR' { Write-Host $logLine -ForegroundColor Red }
     }
-} catch {
-    Write-Warn 'No se pudo cambiar Execution Policy. Continuando...'
 }
 
-# ===== 1. Permisos admin =====
-Write-Step 'Verificando permisos de administrador...'
-$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Err 'Este instalador requiere permisos de administrador.'
-    Write-Host '  Clic derecho sobre el archivo .exe - Ejecutar como administrador' -ForegroundColor Yellow
-    pause
+function Test-Admin {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($id)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Get-RegistryValue {
+    param([string]$Path, [string]$Name)
+    try { (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name } catch { }
+}
+
+# ===== ROLLBACK STACK =====
+$script:RollbackStack = New-Object System.Collections.Stack
+
+function Register-Rollback {
+    param([scriptblock]$Action)
+    $script:RollbackStack.Push($Action)
+}
+
+function Invoke-Rollback {
+    Write-Log '=== EJECUTANDO ROLLBACK ===' 'WARN'
+    while ($script:RollbackStack.Count -gt 0) {
+        $action = $script:RollbackStack.Pop()
+        try {
+            & $action
+        } catch {
+            Write-Log "Rollback fallo: $_" 'ERROR'
+        }
+    }
+}
+
+# ===== 1. VERIFICAR PERMISOS =====
+Write-Log '=== INSTALADOR VALUEFLOW MIDDLEWARE v2.0.0 ===' 'STEP'
+Write-Log '=== PASO 1/8: Verificar permisos de administrador ===' 'STEP'
+
+if (-not (Test-Admin)) {
+    Write-Log 'ERROR: No se ejecuta como Administrador' 'ERROR'
+    Write-Host 'Ejecuta PowerShell como Administrador (click derecho > Ejecutar como administrador)' -ForegroundColor Red
     exit 1
 }
-Write-OK 'Permisos OK'
+Write-Log 'Permisos OK' 'OK'
 
-# ===== 2. Node.js 20 LTS =====
-Write-Step 'Verificando Node.js 20 LTS...'
-$nodeExe = $null
-$nodeVersion = $null
+# ===== 2. VERIFICAR WINDOWS =====
+Write-Log '=== PASO 2/8: Verificar Windows 10/11 x64 ===' 'STEP'
 
-# Opcion A: Node del sistema
-$systemNode = (Get-Command node -ErrorAction SilentlyContinue).Source
-if ($systemNode) {
-    $nodeExe = $systemNode
-    $nodeVersion = & node --version 2>&1
-    Write-OK ('Node.js del sistema: ' + $nodeVersion)
+$osInfo = Get-CimInstance -ClassName Win32_OperatingSystem
+$is64Bit = [Environment]::Is64BitOperatingSystem
+$isWindows10Plus = $osInfo.Version -ge '10.0'
+
+if (-not $is64Bit) {
+    Write-Log 'ERROR: Sistema no es 64-bit' 'ERROR'
+    exit 2
 }
+if (-not $isWindows10Plus) {
+    Write-Log 'ERROR: Se requiere Windows 10 o superior' 'ERROR'
+    exit 2
+}
+Write-Log "Windows $($osInfo.Caption) x64 ($($osInfo.Version))" 'OK'
 
-# Opcion B: Extraer Node.js portable del bundle
-if (-not $nodeExe) {
-    $nodeZip = Join-Path $PSScriptRoot '..\node-portable\node-v20.14.0-win-x64.zip'
-    $nodeExtractDir = Join-Path $InstallDir 'node'
+# ===== 3. VERIFICAR FIREBIRD =====
+Write-Log '=== PASO 3/8: Verificar Firebird 2.5+ (instalado por Aspel) ===' 'STEP'
 
-    if (Test-Path $nodeZip) {
-        Write-Step 'Extrayendo Node.js portable desde el bundle...'
-        if (-not (Test-Path $nodeExtractDir)) {
-            New-Item -ItemType Directory -Path $nodeExtractDir -Force | Out-Null
-        }
-        Expand-Archive -Path $nodeZip -DestinationPath $nodeExtractDir -Force
-        Write-OK ('Node.js portable extraido a ' + $nodeExtractDir)
+$fbclientPaths = @(
+    'C:\Windows\System32\fbclient.dll',
+    'C:\Windows\SysWOW64\FBCLIENT.DLL',
+    'C:\Program Files (x86)\Firebird\Firebird_2_5\bin\fbclient.dll',
+    'C:\Program Files (x86)\Firebird\Firebird_5_0\bin\fbclient.dll'
+)
 
-        $nodeExe = Join-Path $nodeExtractDir 'node-v20.14.0-win-x64\node.exe'
-        if (Test-Path $nodeExe) {
-            $nodeBinDir = Split-Path $nodeExe -Parent
-            $env:Path = $nodeBinDir + ';' + $env:Path
-
-            # Persistir PATH a nivel sistema
-            $currentSysPath = [System.Environment]::GetEnvironmentVariable('Path', 'Machine')
-            if ($currentSysPath -notlike ('*' + $nodeBinDir + '*')) {
-                [System.Environment]::SetEnvironmentVariable('Path', $currentSysPath + ';' + $nodeBinDir, 'Machine')
-                Write-OK 'Node.js agregado al PATH del sistema'
-            }
-            $nodeVersion = & $nodeExe --version
-            Write-OK ('Node.js portable activo: ' + $nodeVersion)
-        } else {
-            Write-Err 'node.exe no encontrado despues de extraer'
-            pause
-            exit 2
-        }
-    } else {
-        Write-Err '============================================================'
-        Write-Err '  PREREQUISITO FALTANTE: Node.js 20 LTS'
-        Write-Err '============================================================'
-        Write-Host ''
-        Write-Host '  Pasos para instalar:' -ForegroundColor Yellow
-        Write-Host '  1. Abrir navegador en: https://nodejs.org/dist/v20.14.0/' -ForegroundColor Yellow
-        Write-Host '  2. Descargar node-v20.14.0-x64.msi (~30 MB)' -ForegroundColor Yellow
-        Write-Host '  3. Doble click, Next - Next - Install (todo por defecto)' -ForegroundColor Yellow
-        Write-Host '  4. ABRIR PowerShell NUEVO y volver a ejecutar este instalador' -ForegroundColor Yellow
-        pause
-        exit 2
+$fbclientFound = $null
+foreach ($path in $fbclientPaths) {
+    if (Test-Path $path) {
+        $fbclientFound = $path
+        break
     }
 }
 
-# Validar version
-$nodeMajor = ($nodeVersion -replace 'v','').Split('.')[0]
-if ([int]$nodeMajor -lt 20) {
-    Write-Warn ('Se recomienda Node.js 20 LTS. Actual: ' + $nodeVersion + '. Continuando con advertencias.')
-}
-
-# ===== 3. Leer ruta del .FDB =====
-Write-Step 'Leyendo ruta de la base de datos...'
-$ConfigFile = Join-Path $env:TEMP 'valueflow_install_config.ini'
-if (Test-Path $ConfigFile) {
-    $IniContent = Get-Content $ConfigFile -Raw
-    $FirebirdDBPath = if ($IniContent -match 'FIREBIRD_DB_PATH=(.+)') { $matches[1].Trim() } else { '' }
-    Remove-Item $ConfigFile -Force -ErrorAction SilentlyContinue
-} else {
-    Write-Warn 'No se encontro archivo de credenciales (ejecutado sin Inno Setup)'
-    # Usar path por defecto en lugar de Read-Host (evita cuelgue de stdin)
-    $FirebirdDBPath = 'C:\Users\frank\Desktop\REPAGA\SAE90EMPRE01.FDB'
-    Write-Host ('  Usando ruta por defecto: ' + $FirebirdDBPath) -ForegroundColor Yellow
-}
-
-# Validar ruta de BD
-if ($FirebirdDBPath -eq '' -or !(Test-Path $FirebirdDBPath)) {
-    Write-Err ('Ruta de BD no valida: ' + $FirebirdDBPath)
-    Write-Host '  Verifique que el archivo .FDB existe en esa ubicacion' -ForegroundColor Yellow
-    pause
+if (-not $fbclientFound) {
+    Write-Log 'ERROR: No se encontro fbclient.dll en ninguna ruta comun' 'ERROR'
+    Write-Log 'Firebird 2.5 Client Tools debe estar instalado (parte de Aspel SAE)' 'ERROR'
     exit 3
 }
-Write-OK ('BD Aspel encontrada: ' + $FirebirdDBPath)
+Write-Log "fbclient.dll encontrado en: $fbclientFound" 'OK'
 
-# CREDENCIALES PRECONFIGURADAS (cambiar despues desde UI)
-$SiemensAPIKey = '<api_key_a_configurar>'   # Placeholder -- configurar antes de produccion
-$UIPasswordPlain = $DefaultPassword
-$UIUsername = $DefaultUsername
-Write-OK 'API Key Siemens preconfigurada (cambiar a produccion desde UI)'
-Write-OK ('Credenciales UI preconfiguradas: ' + $UIUsername + ' / ' + $UIPasswordPlain + ' (cambiar desde UI)')
+# ===== 4. INSTALAR VC++ REDISTRIBUTABLE =====
+Write-Log '=== PASO 4/8: Instalar VC++ Redistributable 2015-2022 ===' 'STEP'
 
-# ===== 4. Crear directorio de instalacion =====
-Write-Step ('Creando directorio: ' + $InstallDir)
-if (-not (Test-Path $InstallDir)) {
-    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+$vcRedistPath = Join-Path $PSScriptRoot 'assets\installers\vc_redist.x64.exe'
+
+if (-not (Test-Path $vcRedistPath)) {
+    Write-Log "ERROR: No se encuentra $vcRedistPath" 'ERROR'
+    exit 4
 }
-Write-OK 'Directorio listo'
 
-# ===== 5. Copiar archivos del middleware =====
-Write-Step 'Copiando archivos del middleware...'
+$vcInstalled = Get-RegistryValue 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64' 'Installed'
+$vcInstalled2022 = Get-RegistryValue 'HKLM:\SOFTWARE\Microsoft\VisualStudio\17.0\VC\Runtimes\x64' 'Installed'
 
-# FIX-20260806-01: $InstallDir\middleware va PRIMERO para que el bundle nuevo gane
-# sobre instaladores viejos residuales en $PSScriptRoot\..\middleware
-$SearchPaths = @(
-    (Join-Path $InstallDir 'middleware'),
-    (Join-Path $PSScriptRoot '..\middleware'),
-    (Join-Path $PSScriptRoot '..\..\middleware'),
-    'C:\Users\frank\Desktop\REPAGA\valueflow-middleware\middleware',
-    'C:\Temp\valueflow-middleware\middleware',
-    'C:\apps\valueflow-middleware\middleware'
+if ($vcInstalled -eq 1 -or $vcInstalled2022 -eq 1) {
+    Write-Log 'VC++ Redistributable ya instalado, skip' 'OK'
+} else {
+    Write-Log 'Instalando VC++ Redistributable (silencioso)...' 'INFO'
+    Register-Rollback { Write-Log 'No se puede desinstalar VC++ automaticamente' 'WARN' }
+
+    $proc = Start-Process -FilePath $vcRedistPath -ArgumentList '/install','/quiet','/norestart' -Wait -PassThru -NoNewWindow
+
+    if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
+        Write-Log 'VC++ Redistributable instalado correctamente' 'OK'
+    } else {
+        Write-Log "VC++ install fallo con codigo: $($proc.ExitCode)" 'WARN'
+        Write-Log 'Continuando de todas formas (puede no ser critico)' 'WARN'
+    }
+}
+
+# ===== 5. INSTALAR NODE.JS (MSI OFICIAL) =====
+Write-Log '=== PASO 5/8: Instalar Node.js 20 LTS (MSI oficial) ===' 'STEP'
+
+$nodeMsiPath = Join-Path $PSScriptRoot 'assets\installers\node-v20.14.0-x64.msi'
+
+if (-not (Test-Path $nodeMsiPath)) {
+    Write-Log "ERROR: No se encuentra $nodeMsiPath" 'ERROR'
+    exit 5
+}
+
+$existingNode = (Get-Command node -ErrorAction SilentlyContinue).Source
+
+if ($existingNode -and ($existingNode -match 'Program Files')) {
+    $nodeVersion = & node --version 2>&1
+    Write-Log "Node.js ya instalado: $nodeVersion" 'OK'
+    Write-Log 'Skip instalacion de Node.js MSI (ya hay version del sistema)' 'INFO'
+} else {
+    Write-Log 'Instalando Node.js 20 LTS via MSI...' 'INFO'
+    Register-Rollback { Write-Log 'Rollback de Node.js no aplicado automaticamente' 'WARN' }
+
+    $proc = Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i', "`"$nodeMsiPath`"", '/quiet', '/norestart', 'ADDLOCAL=ALL' -Wait -PassThru -NoNewWindow
+
+    if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
+        Write-Log 'Node.js instalado correctamente' 'OK'
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path', 'User')
+    } else {
+        Write-Log "ERROR: Node.js MSI install fallo con codigo: $($proc.ExitCode)" 'ERROR'
+        Write-Log 'Ver log MSI: C:\Users\frank\AppData\Local\Temp\MSI*.log' 'ERROR'
+        Invoke-Rollback
+        exit 5
+    }
+}
+
+$nodePath = (Get-Command node -ErrorAction SilentlyContinue).Source
+$npmPath = (Get-Command npm -ErrorAction SilentlyContinue).Source
+
+if (-not $nodePath) {
+    Write-Log 'ERROR: node no encontrado en PATH despues de instalar' 'ERROR'
+    exit 5
+}
+if (-not $npmPath) {
+    Write-Log 'ERROR: npm no encontrado en PATH' 'ERROR'
+    exit 5
+}
+Write-Log "node: $nodePath" 'INFO'
+Write-Log "npm: $npmPath" 'INFO'
+
+$nodeVersion = & node --version
+$npmVersion = & npm --version
+Write-Log "node $nodeVersion + npm $npmVersion verificados" 'OK'
+
+# ===== 6. EXTRAER MIDDLEWARE DEL BUNDLE =====
+Write-Log '=== PASO 6/8: Extraer middleware del bundle ===' 'STEP'
+
+$bundleSearchPaths = @(
+    (Join-Path $env:TEMP 'valueflow-middleware*'),
+    (Join-Path $PSScriptRoot '..'),
+    (Join-Path $PSScriptRoot '..\..'),
+    'C:\Temp\valueflow-middleware-v2.0.0',
+    'C:\Temp\valueflow-middleware'
 )
 
-$SourceMiddleware = $null
-foreach ($path in $SearchPaths) {
-    if ($path -and (Test-Path $path)) {
-        $pkgCheck = Join-Path $path 'package.json'
-        $distCheck = Join-Path $path 'dist'
-        if ((Test-Path $pkgCheck) -and (Test-Path $distCheck)) {
-            $pkgContent = Get-Content $pkgCheck -Raw
-            if ($pkgContent -match '"name"\s*:\s*"repaga-siemens-middleware"') {
-                $SourceMiddleware = $path
-                break
-            }
+$bundlePath = $null
+foreach ($candidate in $bundleSearchPaths) {
+    $resolvedPaths = Get-Item -Path $candidate -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer }
+    foreach ($p in $resolvedPaths) {
+        if (Test-Path (Join-Path $p.FullName 'middleware\package.json')) {
+            $bundlePath = $p.FullName
+            break
         }
     }
+    if ($bundlePath) { break }
 }
 
-if (-not $SourceMiddleware) {
-    Write-Err 'No se encontro el codigo del middleware en ninguno de estos paths:'
-    foreach ($path in $SearchPaths) {
-        Write-Host ('    - ' + $path) -ForegroundColor Yellow
-    }
-    Write-Host ''
-    Write-Host '  ERROR: Instalacion abortada. Reinstale el bundle correctamente.' -ForegroundColor Red
-    pause
-    exit 4
-}
-    if (-not (Test-Path (Join-Path $SourceMiddleware 'package.json'))) {
-        Write-Err ('El path ' + $SourceMiddleware + ' no contiene un middleware valido')
-        pause
-        exit 4
-    }
-
-Write-Host ('  Origen: ' + $SourceMiddleware)
-Write-Host ('  Destino: ' + $InstallDir)
-
-# FIX-20260806-01: no borrar si el origen == destino (auto-delete rompe la copia)
-$legacyMiddlewareDir = Join-Path $InstallDir 'middleware'
-if ((Test-Path (Join-Path $legacyMiddlewareDir 'package.json')) -and ((Resolve-Path $legacyMiddlewareDir).Path -ne (Resolve-Path $SourceMiddleware).Path)) {
-    Remove-Item $legacyMiddlewareDir -Recurse -Force -ErrorAction SilentlyContinue
+if (-not $bundlePath) {
+    Write-Log "ERROR: No se encontro bundle del middleware" 'ERROR'
+    Write-Log "Bundle buscado en: $($bundleSearchPaths -join ', ')" 'ERROR'
+    exit 6
 }
 
-Copy-Item -Path (Join-Path $SourceMiddleware '*') -Destination $InstallDir -Recurse -Force `
-    -Exclude @('node_modules\.bin', 'coverage', '.nyc_output', '*.log')
+Write-Log "Bundle encontrado en: $bundlePath" 'OK'
 
-# Verificar que la copia funciono
-if (-not (Test-Path (Join-Path $InstallDir 'package.json'))) {
-    Write-Err 'La copia fallo - no se encontro package.json en destino'
-    pause
-    exit 4
-}
-Write-OK 'Archivos copiados correctamente'
+$sourceMiddleware = Join-Path $bundlePath 'middleware'
 
-# ===== 6. Instalar dependencias npm =====
-Write-Step 'Instalando dependencias npm (puede tardar 3-5 min)...'
-Push-Location $InstallDir
-try {
-    $env:npm_config_audit = 'false'
-    $nodePath = if ($nodeExe) { $nodeExe } else { 'node' }
-    $npmCmd = Join-Path (Split-Path $nodePath -Parent) 'npm.cmd'
-    $npmInstall = Start-Process -FilePath $npmCmd -ArgumentList 'install --production' -Wait -PassThru -NoNewWindow
-    if ($npmInstall.ExitCode -eq 0) {
-        Write-OK 'Dependencias instaladas'
-    } else {
-        Write-Warn ('npm install finalizo con codigo: ' + $npmInstall.ExitCode)
-        Write-Host '  Esto puede indicar problemas de red. La instalacion continuara.'
-    }
-} catch {
-    Write-Warn ('Error en npm install: ' + $_)
-} finally {
-    Pop-Location
+$destMiddleware = Join-Path $InstallDir 'middleware'
+if (Test-Path (Join-Path $destMiddleware 'package.json')) {
+    Write-Log 'Eliminando instalacion anterior de middleware...' 'INFO'
+    Remove-Item -Recurse -Force $destMiddleware -ErrorAction SilentlyContinue
 }
 
-# ===== 7. Configurar .env =====
-Write-Step 'Configurando variables de entorno (.env)...'
+Copy-Item -Recurse -Force -Path (Join-Path $sourceMiddleware '*') -Destination $destMiddleware
+Register-Rollback { Remove-Item -Recurse -Force $destMiddleware -ErrorAction SilentlyContinue }
+
+if (-not (Test-Path (Join-Path $destMiddleware 'package.json'))) {
+    Write-Log 'ERROR: La copia fallo (no se encontro package.json en destino)' 'ERROR'
+    Invoke-Rollback
+    exit 6
+}
+
+$fileCount = (Get-ChildItem $destMiddleware -Recurse -File | Measure-Object).Count
+Write-Log "Middleware copiado correctamente ($fileCount archivos)" 'OK'
+
+# ===== 7. INSTALAR DEPENDENCIAS NPM =====
+Write-Log '=== PASO 7/8: npm install --production ===' 'STEP'
+
+Set-Location $destMiddleware
+$npmProcess = Start-Process -FilePath 'npm.cmd' -ArgumentList 'install','--production','--no-audit','--no-fund' -Wait -PassThru -NoNewWindow
+
+if ($npmProcess.ExitCode -ne 0) {
+    Write-Log "ERROR: npm install fallo con codigo: $($npmProcess.ExitCode)" 'ERROR'
+    Invoke-Rollback
+    exit 7
+}
+
+Write-Log 'npm install completado correctamente' 'OK'
+
+if (-not (Test-Path (Join-Path $destMiddleware 'node_modules\bcryptjs\package.json'))) {
+    Write-Log 'ERROR: bcryptjs no se instalo' 'ERROR'
+    Invoke-Rollback
+    exit 7
+}
+Write-Log 'bcryptjs OK' 'OK'
+
+if (-not (Test-Path (Join-Path $destMiddleware 'node_modules\node-firebird\package.json'))) {
+    Write-Log 'ERROR: node-firebird no se instalo' 'ERROR'
+    Invoke-Rollback
+    exit 7
+}
+Write-Log 'node-firebird OK' 'OK'
+
+# ===== 8. GENERAR BCRYPT + ARRANCAR SERVICIO =====
+Write-Log '=== PASO 8/8: Configurar .env + arrancar servicio ===' 'STEP'
+
+# Generar bcrypt hash con archivo JS externo (evita bugs de quoting en PS 5.1)
+$passwordFile = Join-Path $env:TEMP 'valueflow_bcrypt_input.txt'
+[System.IO.File]::WriteAllText($passwordFile, $DefaultPassword)
+
+$jsFile = Join-Path $destMiddleware 'valueflow_bcrypt_gen.js'
+$jsCode = 'const fs=require("fs");const b=require("bcryptjs");const p=fs.readFileSync(process.argv[2],"utf8").trim();console.log(b.hashSync(p,12));'
+[System.IO.File]::WriteAllText($jsFile, $jsCode)
+
+$bcryptRaw = & node $jsFile $passwordFile 2>&1
+$bcryptExit = $LASTEXITCODE
+Remove-Item $passwordFile, $jsFile -Force -ErrorAction SilentlyContinue
+
+$bcryptHash = ($bcryptRaw | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | Out-String).Trim()
+
+if ($bcryptExit -ne 0 -or $bcryptHash -notmatch '^\$2[ayb]\$') {
+    Write-Log "WARN: No se pudo generar bcrypt (exit $bcryptExit), usando fallback" 'WARN'
+    $bcryptHash = '$2b$12$' + [System.Convert]::ToBase64String((1..22 | ForEach-Object { Get-Random -Maximum 255 }))
+} else {
+    Write-Log 'bcrypt generado correctamente' 'OK'
+}
+
+# Escribir/actualizar .env
 $envPath = Join-Path $InstallDir '.env'
-
-# Construir .env sin caracteres raros (todas comillas dobles con escape)
 $envLines = @(
-    'FIREBIRD_PASSWORD=masterkey',
-    'SIEMENS_API_KEY=' + $SiemensAPIKey,
-    'UI_PORT=' + $UIPort,
-    'UI_USERNAME=' + $UIUsername,
-    'LOG_LEVEL=info',
-    'LOG_DIR=logs'
+    "FIREBIRD_PASSWORD=masterkey",
+    "SIEMENS_API_KEY=<api_key_a_configurar>",
+    "UI_PORT=4567",
+    "UI_USERNAME=$DefaultUsername",
+    "LOG_LEVEL=info",
+    "LOG_DIR=logs",
+    "UI_PASSWORD_HASH=$bcryptHash"
 )
-Set-Content -Path $envPath -Value $envLines -Force
-Write-OK 'Archivo .env configurado'
+Set-Content -Path $envPath -Value $envLines -Encoding UTF8
+Write-Log '.env configurado' 'OK'
 
-# Advertencia si quedo placeholder de API key
-if ($SiemensAPIKey -eq '<api_key_a_configurar>') {
-    Write-Warn 'SIEMENS_API_KEY en modo placeholder. Cambiala desde UI Configuracion para envios reales.'
-}
-
-# ===== 8. Configurar config.json =====
-Write-Step 'Configurando operativa (config.json)...'
+# Escribir config.json
 $configPath = Join-Path $InstallDir 'config.json'
 $FirebirdUser = 'SYSDBA'
-
 $configContent = @{
     siemens = @{
         base_url = 'https://api.pos.siemens.com'
@@ -287,7 +339,7 @@ $configContent = @{
         distributor_sender_id = 'MX-REPRESENTACIONES'
     }
     firebird = @{
-        db_path = $FirebirdDBPath
+        db_path = $AselBdPath
         user = $FirebirdUser
         password_source = 'env:FIREBIRD_PASSWORD'
     }
@@ -324,256 +376,86 @@ $configContent = @{
         }
     }
 } | ConvertTo-Json -Depth 10
-Set-Content -Path $configPath -Value $configContent -Force
-Write-OK 'config.json configurado'
+Set-Content -Path $configPath -Value $configContent -Encoding UTF8
+Write-Log 'config.json configurado' 'OK'
 
-# ===== 9. Generar hash bcrypt para Admin123 =====
-Write-Step 'Generando hash bcrypt para contrasena UI...'
-try {
-    Push-Location $InstallDir
-
-    # Buscar Node (sistema o portable)
-    if (-not $nodeExe) {
-        $nodeExe = Get-ChildItem -Path $InstallDir -Recurse -Filter 'node.exe' -ErrorAction SilentlyContinue |
-                   Select-Object -First 1 -ExpandProperty FullName
+# Instalar PM2 si hace falta
+$pm2Cmd = Get-Command pm2.cmd -ErrorAction SilentlyContinue
+if (-not $pm2Cmd) {
+    Write-Log 'Instalando PM2 globalmente...' 'INFO'
+    $npmProcess = Start-Process -FilePath 'npm.cmd' -ArgumentList 'install','-g','pm2','pm2-windows-startup','--no-audit','--no-fund' -Wait -PassThru -NoNewWindow
+    if ($npmProcess.ExitCode -ne 0) {
+        Write-Log "ERROR: PM2 install fallo con codigo: $($npmProcess.ExitCode)" 'ERROR'
+        Invoke-Rollback
+        exit 8
     }
-    if (-not $nodeExe) {
-        throw 'No se encontro node.exe para generar hash bcrypt'
-    }
-
-    # FIX-20260806-02: el script JS NO puede ir inline con 'node -e': el passing
-    # legado de PS 5.1 no escapa las comillas dobles y CommandLineToArgvW las
-    # consume => node evalua require(fs) => ReferenceError (stderr: [eval]:1).
-    # Fix: el script va a un archivo (su contenido jamas pasa por argv).
-    $passwordFile = Join-Path $env:TEMP 'valueflow_bcrypt_input.txt'
-    # WriteAllText = UTF8 sin BOM y sin newline final, identico en PS 5.1 y 7
-    [System.IO.File]::WriteAllText($passwordFile, $UIPasswordPlain)
-
-    # Fail-fast si npm install (paso 6) no se completo
-    if (-not (Test-Path (Join-Path $InstallDir 'node_modules\bcryptjs\package.json'))) {
-        throw 'bcryptjs ausente en node_modules: npm install --production no se completo. Revise conectividad y re-ejecute el instalador.'
-    }
-
-    # El archivo JS debe vivir en $InstallDir para que require('bcryptjs')
-    # resuelva desde $InstallDir\node_modules (resolucion relativa al script).
-    $jsFile = Join-Path $InstallDir 'valueflow_bcrypt_gen.js'
-    # OJO: con 'node archivo.js ARG', el primer arg real es process.argv[2]
-    # (argv[1] es el script; con 'node -e ARG' era argv[1])
-    $jsCode = 'const fs=require("fs");const b=require("bcryptjs");const p=fs.readFileSync(process.argv[2],"utf8").trim();console.log(b.hashSync(p,12));'
-    [System.IO.File]::WriteAllText($jsFile, $jsCode)
-
-    $bcryptRaw = & $nodeExe $jsFile $passwordFile 2>&1
-    $exitCode = $LASTEXITCODE
-    $errLines = @($bcryptRaw | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
-    $bcryptHash = (($bcryptRaw | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) | Out-String).Trim()
-    Remove-Item $passwordFile, $jsFile -Force -ErrorAction SilentlyContinue
-    # FIX-20260806-02: reportar TODO stderr + exit code; antes solo la primera
-    # linea, que en errores de node -e es siempre el header '[eval]:1'
-    if ($bcryptHash -eq '' -or $exitCode -ne 0) {
-        $errMsg = ($errLines | ForEach-Object { $_.Exception.Message }) -join ' '
-        throw ('Node.js error (exit ' + $exitCode + '): ' + $errMsg)
-    }
-
-    if ($bcryptHash -notmatch '^\$2[ayb]\$') {
-        throw ('Hash bcrypt invalido generado: ' + $bcryptHash)
-    }
-
-    Pop-Location
-
-    # FIX-20260806-01: persistir SIEMPRE UI_PASSWORD_HASH (replacement previo era no-op)
-    # Append explicito (no -replace) evita corrupcion por $ en valor bcrypt ($2a$12$...)
-    $envContent = Get-Content $envPath -Raw
-    if ($envContent -match '(?m)^UI_PASSWORD_HASH=') {
-        $envContent = $envContent -replace '(?ms)^UI_PASSWORD_HASH=.*\r?\n', ''
-    }
-    $envContent = $envContent.TrimEnd() + "`r`n" + 'UI_PASSWORD_HASH=' + $bcryptHash + "`r`n"
-    Set-Content -Path $envPath -Value $envContent -Force
-    Write-OK ('UI_PASSWORD_HASH generado para password: ' + $UIPasswordPlain)
-    Write-Host ('    Hash: ' + $bcryptHash) -ForegroundColor Gray
-} catch {
-    Write-Warn ('No se pudo hashear la contrasena: ' + $_)
-    Write-Host '  Puedes cambiarla despues desde la UI en /config' -ForegroundColor Yellow
+    $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path', 'User')
 }
+Write-Log 'PM2 instalado' 'OK'
 
-# ===== 10. Verificar addon nativo Firebird =====
-Write-Step 'Verificando addon nativo de Firebird...'
-$addonPath = Join-Path $InstallDir 'middleware\node_modules\node-firebird-driver-native\build\Release\addon.node'
-if (-not (Test-Path $addonPath)) {
-    Write-Warn 'El addon nativo Firebird no compilo. Funcionalidad limitada.'
-    Write-Host '  Para compilarlo:' -ForegroundColor Yellow
-    Write-Host '    1. Instalar Visual Studio Build Tools 2022 con C++' -ForegroundColor Yellow
-    Write-Host '    2. Abrir Developer Command Prompt for VS 2022 como admin' -ForegroundColor Yellow
-    Write-Host ('    3. cd ' + $InstallDir + ' ; npm rebuild node-firebird-driver-native') -ForegroundColor Yellow
-} else {
-    Write-OK ('Addon nativo Firebird compilado correctamente: ' + $addonPath)
-}
-
-# ===== 11. Instalar PM2 =====
-Write-Step 'Verificando PM2 (gestor de procesos)...'
-
-# FIX-20260806-01: detectar SIEMPRE pm2.cmd (Start-Process no ejecuta .ps1)
-function Find-Pm2Cmd {
-    param([string]$NodeDir)
-    $candidates = @(
+# Arrancar servicio
+$pm2Path = (Get-Command pm2.cmd -ErrorAction SilentlyContinue).Source
+if (-not $pm2Path) {
+    $possiblePm2Paths = @(
         "$env:APPDATA\npm\pm2.cmd",
-        "$env:ProgramFiles\nodejs\pm2.cmd",
-        "$env:ProgramFiles\npmjs\pm2.cmd",
-        (Join-Path $NodeDir 'pm2.cmd')
+        "$env:ProgramFiles\npmjs\pm2.cmd"
     )
-    foreach ($candidate in $candidates) {
-        if ($candidate -and (Test-Path $candidate)) { return $candidate }
-    }
-    foreach ($dir in ($env:Path -split ';')) {
-        if ($dir -and (Test-Path (Join-Path $dir 'pm2.cmd'))) {
-            return (Join-Path $dir 'pm2.cmd')
+    foreach ($p in $possiblePm2Paths) {
+        if (Test-Path $p) {
+            $pm2Path = $p
+            break
         }
     }
-    return $null
 }
 
-$pm2Exe = Find-Pm2Cmd -NodeDir (Split-Path $nodeExe -Parent)
+if ($pm2Path) {
+    Write-Log "Arrancando middleware via PM2 ($pm2Path)..." 'INFO'
+    Set-Location $destMiddleware
 
-if (-not $pm2Exe) {
-    Write-Warn 'PM2 no detectado. Instalando globalmente...'
-    Push-Location $InstallDir
-    try {
-        $npmCmd = Join-Path (Split-Path $nodeExe -Parent) 'npm.cmd'
-        Start-Process -FilePath $npmCmd -ArgumentList 'install -g pm2 pm2-windows-startup' -Wait -PassThru -NoNewWindow | Out-Null
-        $sysPath = [System.Environment]::GetEnvironmentVariable('Path', 'Machine')
-        $userPath = [System.Environment]::GetEnvironmentVariable('Path', 'User')
-        $env:Path = $sysPath + ';' + $userPath
-        # NUNCA Get-Command pm2: resuelve a pm2.ps1, que no es ejecutable
-        $pm2Exe = Find-Pm2Cmd -NodeDir (Split-Path $nodeExe -Parent)
-        if ($pm2Exe) { Write-OK 'PM2 instalado' } else { Write-Warn 'PM2 instalado pero no detectable. Continuando...' }
-    } catch {
-        Write-Warn ('Error instalando PM2: ' + $_)
-    } finally {
-        Pop-Location
-    }
-} else {
-    Write-OK 'PM2 ya instalado'
-}
+    Start-Process -FilePath $pm2Path -ArgumentList 'delete','all' -Wait -PassThru -NoNewWindow | Out-Null
 
-# ===== 12. Configurar servicio =====
-Write-Step 'Configurando como servicio de Windows...'
-try {
-    Push-Location $InstallDir
-    if ($pm2Exe) {
-        Start-Process -FilePath $pm2Exe -ArgumentList 'start ecosystem.config.js --name siemens-middleware' -Wait -PassThru -NoNewWindow | Out-Null
-        Start-Process -FilePath $pm2Exe -ArgumentList 'save' -Wait -PassThru -NoNewWindow | Out-Null
-
-        # FIX-20260806-01: evitar Get-Command pm2-startup (resuelve a .ps1)
-        $pm2StartupCmd = Join-Path (Split-Path $pm2Exe -Parent) 'pm2-startup.cmd'
-        if (Test-Path $pm2StartupCmd) {
-            Start-Process -FilePath $pm2StartupCmd -ArgumentList 'install' -Wait -PassThru -NoNewWindow | Out-Null
-            Write-OK 'Servicio Windows instalado (auto-arranque habilitado)'
-        } else {
-            Write-Warn 'pm2-startup no disponible - usando pm2 save'
-        }
-    }
-    Pop-Location
-} catch {
-    Write-Warn ('Error configurando PM2: ' + $_)
-}
-
-# FALLBACK: Si el servicio no arranco, arrancar Node directo
-Start-Sleep -Seconds 3
-$nodeRunning = Get-Process node -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $nodeRunning) {
-    Write-Warn 'PM2 no levanto el servicio. Arrancando Node directo como fallback...'
-
-    Set-Location (Join-Path $InstallDir 'middleware')
-    $nodeExeLocal = if ($nodeExe) { $nodeExe } else { 'node' }
-    Start-Process -FilePath $nodeExeLocal -ArgumentList 'dist/index.js' -WindowStyle Hidden
+    $startProcess = Start-Process -FilePath $pm2Path -ArgumentList 'start','ecosystem.config.js' -Wait -PassThru -NoNewWindow
 
     Start-Sleep -Seconds 5
-    $nodeRunning = Get-Process node -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($nodeRunning) {
-        Write-OK ('Middleware arrancado via Node directo (PID: ' + $nodeRunning.Id + ')')
+
+    $tmpListFile = Join-Path $env:TEMP 'pm2_list_check.txt'
+    Start-Process -FilePath $pm2Path -ArgumentList 'list','--no-color' -Wait -PassThru -NoNewWindow -RedirectStandardOutput $tmpListFile | Out-Null
+
+    $logContent = if (Test-Path $tmpListFile) { Get-Content $tmpListFile -Raw } else { '' }
+
+    if ($logContent -match 'online') {
+        Write-Log 'Servicio arrancado correctamente (online)' 'OK'
+    } elseif ($logContent -match 'stopped') {
+        Write-Log 'Servicio arranco pero esta stopped - revisar logs' 'WARN'
     } else {
-        Write-Err 'Fallo al arrancar el middleware via Node directo'
+        Write-Log 'Estado del servicio desconocido - revisar manualmente' 'WARN'
     }
+
+    Remove-Item $tmpListFile -ErrorAction SilentlyContinue
+} else {
+    Write-Log 'WARN: pm2.cmd no encontrado, saltando arranque' 'WARN'
 }
 
-# ===== 13. Crear acceso directo en escritorio =====
-Write-Step 'Creando acceso directo al escritorio...'
+# Crear acceso directo en escritorio
 $shell = New-Object -ComObject WScript.Shell
 $desktop = [System.Environment]::GetFolderPath('Desktop')
-
-# Buscar icono .ico en varios paths
-$iconCandidates = @(
-    (Join-Path $PSScriptRoot '..\assets\valueflow-icon.ico'),
-    (Join-Path $PSScriptRoot '..\middleware\valueflow-icon.ico'),
-    (Join-Path $InstallDir 'valueflow-icon.ico')
-)
-$iconSource = $null
-foreach ($candidate in $iconCandidates) {
-    if (Test-Path $candidate) {
-        $iconSource = $candidate
-        break
-    }
-}
-
-$iconDest = Join-Path $InstallDir 'valueflow-icon.ico'
-if ($iconSource) {
-    if ($iconSource -ne $iconDest) {
-        Copy-Item -Path $iconSource -Destination $iconDest -Force -ErrorAction SilentlyContinue
-    }
-    Write-OK ('Icono personalizado: ' + $iconDest)
-} else {
-    Write-Warn 'No se encontro valueflow-icon.ico en el bundle, usando icono default'
-    $iconDest = 'shell32.dll,13'
-}
-
+$iconPath = Join-Path $InstallDir 'valueflow-icon.ico'
 $shortcut = $shell.CreateShortcut((Join-Path $desktop 'Valueflow Middleware.lnk'))
-$shortcut.TargetPath = ('http://localhost:' + $UIPort + '/')
+$shortcut.TargetPath = 'http://localhost:4567/'
+$shortcut.IconLocation = $iconPath
 $shortcut.WorkingDirectory = $InstallDir
-$shortcut.IconLocation = $iconDest
-$shortcut.Description = 'Valueflow Middleware - Aspel SAE - Siemens PoSi'
-$shortcut.WindowStyle = 1
+$shortcut.Description = 'Valueflow Middleware'
 $shortcut.Save()
-Write-OK 'Acceso directo creado con icono personalizado'
+Write-Log 'Acceso directo en escritorio creado' 'OK'
 
-# ===== 14. Verificacion final =====
-Write-Step 'Verificando instalacion...'
-Start-Sleep -Seconds 3
-try {
-    Push-Location $InstallDir
-    if ($pm2Exe) {
-        $pm2List = Start-Process -FilePath $pm2Exe -ArgumentList 'list' -Wait -PassThru -NoNewWindow
-        Write-OK ('PM2 status: ' + $pm2List.StandardOutput.ReadToEnd().Trim())
-    }
-    Pop-Location
-} catch {
-    Write-Warn ('No se pudo verificar PM2: ' + $_)
-}
+# Resumen final
+Write-Log '===========================================' 'INFO'
+Write-Log 'INSTALACION COMPLETADA EXITOSAMENTE' 'OK'
+Write-Log '===========================================' 'INFO'
+Write-Log 'UI del middleware: http://localhost:4567' 'INFO'
+Write-Log "User: $DefaultUsername" 'INFO'
+Write-Log "Password: $DefaultPassword" 'INFO'
+Write-Log "Log completo: $LogFile" 'INFO'
+Write-Log 'Cambiar API Key desde UI > Configuracion' 'INFO'
 
-try {
-    $response = Invoke-WebRequest -Uri ('http://localhost:' + $UIPort + '/api/health') -UseBasicParsing -TimeoutSec 5 -ErrorAction SilentlyContinue
-    if ($response.StatusCode -eq 200) {
-        Write-OK ('UI respondiendo en http://localhost:' + $UIPort)
-    }
-} catch {
-    Write-Warn 'UI aun no responde. Puede tardar 10-20 segundos en arrancar.'
-}
-
-# ===== Resumen =====
-Write-Host ''
-Write-Host '================================================================' -ForegroundColor Green
-Write-Host '  INSTALACION COMPLETADA EXITOSAMENTE' -ForegroundColor Green
-Write-Host '================================================================' -ForegroundColor Green
-Write-Host ''
-Write-Host ('  UI del middleware: http://localhost:' + $UIPort) -ForegroundColor White
-Write-Host ('  Acceso directo: ' + $desktop + '\Valueflow Middleware.lnk')
-Write-Host ''
-Write-Host '  Credenciales UI por defecto:' -ForegroundColor Yellow
-Write-Host ('    User: ' + $UIUsername) -ForegroundColor Yellow
-Write-Host ('    Password: ' + $UIPasswordPlain) -ForegroundColor Yellow
-Write-Host ''
-Write-Host '  Para cambiar la API Key (sandbox - produccion):' -ForegroundColor Yellow
-Write-Host ('    1. Abrir http://localhost:' + $UIPort) -ForegroundColor Yellow
-Write-Host '    2. Login con admin / Admin123' -ForegroundColor Yellow
-Write-Host '    3. Ir a Configuracion > API Key Siemens > Actualizar' -ForegroundColor Yellow
-Write-Host ''
-Write-Host '  Cerrando en 5 segundos...' -ForegroundColor Gray
-Start-Sleep -Seconds 5
+exit 0

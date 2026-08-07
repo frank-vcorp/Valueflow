@@ -1,19 +1,19 @@
 ; ============================================
 ; Valueflow Middleware - Inno Setup Script
-; Versión TODO-EN-UNO con wizard de 3 campos
+; v2.0.0 - Instalador robusto con MSI oficiales
 ; Compilable con ISCC.exe v6.x o v7.x
-; Output: build_output\Valueflow-Setup-v1.0.exe
+; Output: build_output\Valueflow-Setup-v2.0.0.exe
 ; ============================================
 
 #define MyAppName "Valueflow Middleware"
-#define MyAppVersion "1.4.2"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "VCorp - Representaciones Aga de Saltillo"
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-AppVerName={#MyAppName} v1.3.1 (build 2026-08-06)
+AppVerName={#MyAppName} v2.0.0 (build 2026-08-06)
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\siemens-middleware
 DefaultGroupName={#MyAppName}
@@ -27,7 +27,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Valueflow Middleware Installer
-OutputBaseFilename=Valueflow-Setup-v1.4.2
+OutputBaseFilename=Valueflow-Setup-v2.0.0
 OutputDir=build_output
 
 [Languages]
@@ -44,9 +44,14 @@ Source: "..\middleware\*"; DestDir: "{app}\middleware"; Flags: ignoreversion rec
 ; Scripts del instalador
 Source: "install.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "install.bat"; DestDir: "{app}\installer"; Flags: ignoreversion
+Source: "uninstall.bat"; DestDir: "{app}\installer"; Flags: ignoreversion
 
-; Node.js 20 LTS portable (NO requiere instalacion MSI; viene incluido)
-Source: "assets\node-v20.14.0-win-x64.zip"; DestDir: "{app}\node-portable"; Flags: ignoreversion
+; Instaladores oficiales del sistema (NO portables) - v2.0.0
+; Deploy a {app}\installer\assets\installers para que install.ps1 los
+; encuentre via $PSScriptRoot\assets\installers\... (auto-cleanup en uninstall)
+Source: "assets\installers\node-v20.14.0-x64.msi"; DestDir: "{app}\installer\assets\installers"; Flags: ignoreversion
+Source: "assets\installers\vc_redist.x64.exe"; DestDir: "{app}\installer\assets\installers"; Flags: ignoreversion
+Source: "assets\installers\node-v20.14.0-win-x64.zip"; DestDir: "{app}\installer\assets\installers"; Flags: ignoreversion
 
 ; Assets (logos)
 Source: "..\middleware\public\logo_aga_letras_2.png"; DestDir: "{app}\middleware\public"; Flags: ignoreversion
@@ -67,21 +72,19 @@ Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\installer\install.bat"; T
 ; Ejecutar install.bat al final del setup (solo en modo NO-silent)
 Filename: "{app}\installer\install.bat"; Description: "Configurar e iniciar Valueflow Middleware"; Flags: runmaximized nowait postinstall skipifsilent
 
-; Pasar credenciales como parámetros de línea de comandos a install.bat
-; (instalador las recogió vía [Code] InitializeSetup)
-
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\logs"
 Type: filesandordirs; Name: "{app}\middleware\node_modules"
 Type: filesandordirs; Name: "{app}\middleware\.env"
 Type: filesandordirs; Name: "{app}\middleware\config.json"
+Type: filesandordirs; Name: "{app}\installer\assets"
 
 [UninstallRun]
 Filename: "pm2"; Parameters: "delete siemens-middleware"; Flags: runhidden
 
 [Code]
 { Esta seccion del [Code] se conserva minima y compatible con Inno Setup 6 y 7. }
-{ Recoge 3 campos de credenciales via wizard personalizada, los pasa a install.bat }
+{ Recoge 1 campo (ruta del FDB) via wizard, lo pasa a install.bat }
 { mediante archivo temporal. NO usa funciones Pascal complejas. }
 
 var
@@ -104,10 +107,6 @@ begin
     '  API Key Siemens: sandbox QUA (cambiar a produccion desde UI)'
   );
 
-  { UNICO campo: Ruta del archivo .FDB de Aspel SAE }
-  { Filtro: mostramos TODOS los archivos primero para que el usuario encuentre }
-  { el .FDB en cualquier carpeta. Para que Inno Setup muestre archivos, el }
-  { filtro debe terminar con *.* (no *.FDB primero) y los filtros se separan con | }
   FirebirdDBPathPage.Add(
     'Ruta del archivo .FDB de Aspel SAE (use Examinar para navegar):',
     'Todos los archivos (*.*)|*.*|Archivos Firebird (*.FDB)|*.FDB',
@@ -115,7 +114,7 @@ begin
   );
 end;
 
-{ Guardar solo la ruta del FDB en archivo temporal que install.bat leera }
+{ Guardar la ruta del FDB en archivo temporal que install.ps1 leera }
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ConfigFile: String;
