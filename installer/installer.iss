@@ -1,4 +1,4 @@
-; ============================================
+﻿; ============================================
 ; Valueflow Middleware - Inno Setup Script
 ; v2.0.0 - Instalador robusto con MSI oficiales
 ; Compilable con ISCC.exe v6.x o v7.x
@@ -6,7 +6,7 @@
 ; ============================================
 
 #define MyAppName "Valueflow Middleware"
-#define MyAppVersion "2.0.2"
+#define MyAppVersion "2.0.5"
 #define MyAppPublisher "VCorp - Representaciones Aga de Saltillo"
 
 [Setup]
@@ -27,7 +27,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Valueflow Middleware Installer
-OutputBaseFilename=Valueflow-Setup-v2.0.2
+OutputBaseFilename=Valueflow-Setup-v2.0.5
 OutputDir=build_output
 
 [Languages]

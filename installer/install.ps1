@@ -1,7 +1,7 @@
-#Requires -RunAsAdministrator
+﻿#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Instalador robusto de Valueflow Middleware v2.0.2
+    Instalador robusto de Valueflow Middleware v2.0.4
 
 .DESCRIPTION
     v2.0.2: ARREGLADO el bug de paths fijos que apuntan a instalaciones
@@ -13,7 +13,7 @@
 .NOTES
     Frank descubrio que ejecutar install.bat desde una instalacion
     anterior usaba bundle viejo. Ahora instalable verifica su propia version.
-    ID de intervencion: IMPL-20260806-02
+    ID de intervencion: IMPL-20260806-03 (fix VERSION CHECK aborts incorrectos)
 #>
 
 [CmdletBinding()]
@@ -25,55 +25,6 @@ param(
     [string]$DefaultPassword = 'Admin123'
 )
 
-# ===== VERSION CHECK =====
-# Detectar si es instalable v1.x (viejo) o v2.x (nuevo)
-$expectedVersion = '2.0.2'
-if ($MyInvocation.MyCommand.Path -match 'siemens-middleware') {
-    # Estamos ejecutando desde una instalacion existente
-    # Verificar que sea la version esperada
-    $versionFile = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'VERSION'
-    if (Test-Path $versionFile) {
-        $bundleVersion = Get-Content $versionFile -Raw | Select-String -Pattern 'MAJOR=(\d+).*MINOR=(\d+).*PATCH=(\d+)' |
-            ForEach-Object { "$($_.Matches.Groups[1].Value).$($_.Matches.Groups[2].Value).$($_.Matches.Groups[3].Value)" }
-        if ($bundleVersion -ne $expectedVersion) {
-            Write-Host "============================================================" -ForegroundColor Red
-            Write-Host "ERROR: Version de bundle incompatible" -ForegroundColor Red
-            Write-Host "  Bundle version: $bundleVersion" -ForegroundColor Red
-            Write-Host "  Esperada: $expectedVersion" -ForegroundColor Red
-            Write-Host ""
-            Write-Host "PROBABLE CAUSA:" -ForegroundColor Yellow
-            Write-Host "  Estas ejecutando el install.ps1 de una instalacion ANTERIOR." -ForegroundColor Yellow
-            Write-Host "  Para usar la version nueva v2.0.2:" -ForegroundColor Yellow
-            Write-Host "  1. Borra C:\Program Files\siemens-middleware (PowerShell Admin)"
-            Write-Host "  2. Borra C:\apps\siemens-middleware"
-            Write-Host "  3. Borra C:\Temp\valueflow-middleware*"
-            Write-Host "  4. Ejecuta Valueflow-Setup-v2.0.2.exe desde el Escritorio"
-            Write-Host "============================================================" -ForegroundColor Red
-            pause
-            exit 99
-        }
-    } else {
-        # No hay VERSION file en la instalacion existente
-        # Si no estamos en InstallDir, podria ser una instalacion vieja
-        $scriptDir = Split-Path -Parent $PSScriptRoot
-        if ($scriptDir -match 'Program Files') {
-            Write-Host "============================================================" -ForegroundColor Red
-            Write-Host "ERROR: Instalacion v1.x detectada en $scriptDir" -ForegroundColor Red
-            Write-Host "  Esta corriendo un instalable antiguo." -ForegroundColor Red
-            Write-Host ""
-            Write-Host "  SOLUCION:" -ForegroundColor Yellow
-            Write-Host "  1. Cierre esta ventana PowerShell" -ForegroundColor Yellow
-            Write-Host "  2. Ejecute estos comandos en PowerShell Admin:" -ForegroundColor Yellow
-            Write-Host "     Remove-Item -Recurse -Force 'C:\Program Files\siemens-middleware'"
-            Write-Host "     Remove-Item -Recurse -Force 'C:\apps\siemens-middleware'"
-            Write-Host "     Remove-Item -Recurse -Force 'C:\Temp\valueflow-middleware*'"
-            Write-Host "  3. Doble click en Valueflow-Setup-v2.0.2.exe desde el Escritorio" -ForegroundColor Yellow
-            Write-Host "============================================================" -ForegroundColor Red
-            pause
-            exit 99
-        }
-    }
-}
 
 # ===== CREAR LOG PRIMERO =====
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
@@ -97,7 +48,7 @@ function Write-Log {
 }
 
 # ===== INICIO =====
-Write-Log '=== INSTALADOR VALUEFLOW MIDDLEWARE v2.0.2 ===' 'STEP'
+Write-Log '=== INSTALADOR VALUEFLOW MIDDLEWARE v2.0.4 ===' 'STEP'
 Write-Log "=== PS Script Root: $PSScriptRoot ===" 'INFO'
 
 function Test-Admin {
@@ -132,7 +83,7 @@ function Invoke-Rollback {
 }
 
 # ===== 1. VERIFICAR PERMISOS =====
-Write-Log '=== INSTALADOR VALUEFLOW MIDDLEWARE v2.0.0 ===' 'STEP'
+Write-Log '=== PASO 1/8 INICIANDO ===' 'STEP'
 Write-Log '=== PASO 1/8: Verificar permisos de administrador ===' 'STEP'
 
 if (-not (Test-Admin)) {
@@ -301,9 +252,21 @@ $destMiddleware = Join-Path $InstallDir 'middleware'
 if (Test-Path (Join-Path $destMiddleware 'package.json')) {
     Write-Log 'Eliminando instalacion anterior de middleware...' 'INFO'
     Remove-Item -Recurse -Force $destMiddleware -ErrorAction SilentlyContinue
+    # Si aún existe, forzar eliminación de forma agresiva
+    if (Test-Path $destMiddleware) {
+        Write-Log 'Forzando eliminacion de archivos restantes...' 'INFO'
+        Get-ChildItem -Path $destMiddleware -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
+        cmd /c "rmdir /s /q `"$destMiddleware`"" | Out-Null
+    }
 }
 
-Copy-Item -Recurse -Force -Path (Join-Path $sourceMiddleware '*') -Destination $destMiddleware
+# Verificar que se eliminó antes de copiar
+if (Test-Path $destMiddleware) {
+    Write-Log 'ERROR: No se pudo eliminar middleware existente. Cierre procesos node y reintente.' 'ERROR'
+    exit 6
+}
+
+Copy-Item -Recurse -Force -Path $sourceMiddleware -Destination $destMiddleware
 Register-Rollback { Remove-Item -Recurse -Force $destMiddleware -ErrorAction SilentlyContinue }
 
 if (-not (Test-Path (Join-Path $destMiddleware 'package.json'))) {
@@ -316,13 +279,21 @@ $fileCount = (Get-ChildItem $destMiddleware -Recurse -File | Measure-Object).Cou
 Write-Log "Middleware copiado correctamente ($fileCount archivos)" 'OK'
 
 # ===== 7. INSTALAR DEPENDENCIAS NPM =====
-Write-Log '=== PASO 7/8: npm install --production ===' 'STEP'
+Write-Log '=== PASO 7/8: npm install (dependencias) ===' 'STEP'
 
 Set-Location $destMiddleware
-$npmProcess = Start-Process -FilePath 'npm.cmd' -ArgumentList 'install','--production','--no-audit','--no-fund' -Wait -PassThru -NoNewWindow
-
-if ($npmProcess.ExitCode -ne 0) {
-    Write-Log "ERROR: npm install fallo con codigo: $($npmProcess.ExitCode)" 'ERROR'
+Write-Log "Directorio de trabajo: $destMiddleware" 'INFO'
+$npmCmd = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
+if (-not $npmCmd) {
+    Write-Log 'ERROR: npm.cmd no encontrado en PATH' 'ERROR'
+    exit 7
+}
+Write-Log "Usando npm: $npmCmd" 'INFO'
+# Ejecutar npm install usando cmd para capturar exit code correctamente
+cmd /c "cd /d `"$destMiddleware`" && `"$npmCmd`" install --omit=dev --no-audit --no-fund"
+$npmExit = $LASTEXITCODE
+if ($npmExit -ne 0) {
+    Write-Log "ERROR: npm install fallo con codigo: $npmExit" 'ERROR'
     Invoke-Rollback
     exit 7
 }
