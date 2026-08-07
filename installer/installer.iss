@@ -6,7 +6,7 @@
 ; ============================================
 
 #define MyAppName "Valueflow Middleware"
-#define MyAppVersion "2.0.1"
+#define MyAppVersion "2.0.2"
 #define MyAppPublisher "VCorp - Representaciones Aga de Saltillo"
 
 [Setup]
@@ -27,7 +27,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Valueflow Middleware Installer
-OutputBaseFilename=Valueflow-Setup-v2.0.1
+OutputBaseFilename=Valueflow-Setup-v2.0.2
 OutputDir=build_output
 
 [Languages]
@@ -45,6 +45,7 @@ Source: "..\middleware\*"; DestDir: "{app}\middleware"; Flags: ignoreversion rec
 Source: "install.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "install.bat"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "uninstall.bat"; DestDir: "{app}\installer"; Flags: ignoreversion
+Source: "VERSION"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Instaladores oficiales del sistema (NO portables) - v2.0.0
 ; Deploy a {app}\installer\assets\installers para que install.ps1 los

@@ -1,19 +1,19 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Instalador robusto de Valueflow Middleware v2.0.0
+    Instalador robusto de Valueflow Middleware v2.0.2
 
 .DESCRIPTION
-    Instala Node.js + VC++ + middleware con:
-    - Verificacion paso a paso con rollback automatico
-    - Logging detallado a archivo (C:\apps\siemens-middleware\install.log)
-    - Uso de instaladores oficiales (.msi) NO portables
-    - Limpieza previa automatica
+    v2.0.2: ARREGLADO el bug de paths fijos que apuntan a instalaciones
+    anteriores. Ahora:
+    - Detecta si es la version vieja (v1.x) y aborta con mensaje claro
+    - SIEMPRE busca el bundle solo en $env:TEMP (donde Inno Setup extrae)
+    - Limpia versiones anteriores antes de continuar
 
 .NOTES
-    Frank perdio la paciencia con v1.x. Esta version es la final.
-    Cualquier fallo debe revertir TODO y dejar mensaje claro.
-    ID de intervencion: IMPL-20260806-01
+    Frank descubrio que ejecutar install.bat desde una instalacion
+    anterior usaba bundle viejo. Ahora instalable verifica su propia version.
+    ID de intervencion: IMPL-20260806-02
 #>
 
 [CmdletBinding()]
@@ -25,8 +25,57 @@ param(
     [string]$DefaultPassword = 'Admin123'
 )
 
-# ===== INICIALIZACION DEL LOG =====
-# Crear el directorio de instalacion y el archivo de log PRIMERO
+# ===== VERSION CHECK =====
+# Detectar si es instalable v1.x (viejo) o v2.x (nuevo)
+$expectedVersion = '2.0.2'
+if ($MyInvocation.MyCommand.Path -match 'siemens-middleware') {
+    # Estamos ejecutando desde una instalacion existente
+    # Verificar que sea la version esperada
+    $versionFile = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'VERSION'
+    if (Test-Path $versionFile) {
+        $bundleVersion = Get-Content $versionFile -Raw | Select-String -Pattern 'MAJOR=(\d+).*MINOR=(\d+).*PATCH=(\d+)' |
+            ForEach-Object { "$($_.Matches.Groups[1].Value).$($_.Matches.Groups[2].Value).$($_.Matches.Groups[3].Value)" }
+        if ($bundleVersion -ne $expectedVersion) {
+            Write-Host "============================================================" -ForegroundColor Red
+            Write-Host "ERROR: Version de bundle incompatible" -ForegroundColor Red
+            Write-Host "  Bundle version: $bundleVersion" -ForegroundColor Red
+            Write-Host "  Esperada: $expectedVersion" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "PROBABLE CAUSA:" -ForegroundColor Yellow
+            Write-Host "  Estas ejecutando el install.ps1 de una instalacion ANTERIOR." -ForegroundColor Yellow
+            Write-Host "  Para usar la version nueva v2.0.2:" -ForegroundColor Yellow
+            Write-Host "  1. Borra C:\Program Files\siemens-middleware (PowerShell Admin)"
+            Write-Host "  2. Borra C:\apps\siemens-middleware"
+            Write-Host "  3. Borra C:\Temp\valueflow-middleware*"
+            Write-Host "  4. Ejecuta Valueflow-Setup-v2.0.2.exe desde el Escritorio"
+            Write-Host "============================================================" -ForegroundColor Red
+            pause
+            exit 99
+        }
+    } else {
+        # No hay VERSION file en la instalacion existente
+        # Si no estamos en InstallDir, podria ser una instalacion vieja
+        $scriptDir = Split-Path -Parent $PSScriptRoot
+        if ($scriptDir -match 'Program Files') {
+            Write-Host "============================================================" -ForegroundColor Red
+            Write-Host "ERROR: Instalacion v1.x detectada en $scriptDir" -ForegroundColor Red
+            Write-Host "  Esta corriendo un instalable antiguo." -ForegroundColor Red
+            Write-Host ""
+            Write-Host "  SOLUCION:" -ForegroundColor Yellow
+            Write-Host "  1. Cierre esta ventana PowerShell" -ForegroundColor Yellow
+            Write-Host "  2. Ejecute estos comandos en PowerShell Admin:" -ForegroundColor Yellow
+            Write-Host "     Remove-Item -Recurse -Force 'C:\Program Files\siemens-middleware'"
+            Write-Host "     Remove-Item -Recurse -Force 'C:\apps\siemens-middleware'"
+            Write-Host "     Remove-Item -Recurse -Force 'C:\Temp\valueflow-middleware*'"
+            Write-Host "  3. Doble click en Valueflow-Setup-v2.0.2.exe desde el Escritorio" -ForegroundColor Yellow
+            Write-Host "============================================================" -ForegroundColor Red
+            pause
+            exit 99
+        }
+    }
+}
+
+# ===== CREAR LOG PRIMERO =====
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 New-Item -ItemType File -Path $LogFile -Force | Out-Null
 
@@ -46,6 +95,10 @@ function Write-Log {
         'ERROR' { Write-Host $logLine -ForegroundColor Red }
     }
 }
+
+# ===== INICIO =====
+Write-Log '=== INSTALADOR VALUEFLOW MIDDLEWARE v2.0.2 ===' 'STEP'
+Write-Log "=== PS Script Root: $PSScriptRoot ===" 'INFO'
 
 function Test-Admin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
