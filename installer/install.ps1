@@ -338,8 +338,8 @@ if ($bcryptExit -ne 0 -or $bcryptHash -notmatch '^\$2[ayb]\$') {
     Write-Log 'bcrypt generado correctamente' 'OK'
 }
 
-# Escribir/actualizar .env
-$envPath = Join-Path $InstallDir '.env'
+# Escribir/actualizar .env (en el directorio del middleware, donde PM2 arranca)
+$envPath = Join-Path $destMiddleware '.env'
 $envLines = @(
     "FIREBIRD_PASSWORD=masterkey",
     "SIEMENS_API_KEY=<api_key_a_configurar>",
@@ -352,8 +352,8 @@ $envLines = @(
 Set-Content -Path $envPath -Value $envLines -Encoding UTF8
 Write-Log '.env configurado' 'OK'
 
-# Escribir config.json
-$configPath = Join-Path $InstallDir 'config.json'
+# Escribir config.json (en el directorio del middleware, donde PM2 arranca)
+$configPath = Join-Path $destMiddleware 'config.json'
 $FirebirdUser = 'SYSDBA'
 $configContent = @{
     siemens = @{

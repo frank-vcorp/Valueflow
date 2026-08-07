@@ -6,7 +6,7 @@
 ; ============================================
 
 #define MyAppName "Valueflow Middleware"
-#define MyAppVersion "2.0.6"
+#define MyAppVersion "2.0.7"
 #define MyAppPublisher "VCorp - Representaciones Aga de Saltillo"
 
 [Setup]
@@ -27,7 +27,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Valueflow Middleware Installer
-OutputBaseFilename=Valueflow-Setup-v2.0.6
+OutputBaseFilename=Valueflow-Setup-v2.0.7
 OutputDir=build_output
 
 [Languages]
