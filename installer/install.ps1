@@ -433,49 +433,49 @@ if (-not $pm2Path) {
 }
 
 if ($pm2Path) {
-    Write-Log "Arrancando middleware via PM2 ($pm2Path)..." 'INFO'
+    Write-Log ('Arrancando middleware via PM2 (' + $pm2Path + ')...') 'INFO'
     Set-Location $destMiddleware
 
-    Write-Log 'Directorio de PM2: ' $destMiddleware 'INFO'
+    Write-Log ('Directorio de PM2: ' + $destMiddleware) 'INFO'
 
     # Verificar que ecosystem.config.js existe
     $ecoFile = Join-Path $destMiddleware 'ecosystem.config.js'
     if (-not (Test-Path $ecoFile)) {
-        Write-Log "ERROR: ecosystem.config.js no existe en $destMiddleware" 'ERROR'
+        Write-Log ('ERROR: ecosystem.config.js no existe en ' + $destMiddleware) 'ERROR'
         Invoke-Rollback
         exit 8
     }
-    Write-Log "ecosystem.config.js encontrado" 'INFO'
+    Write-Log 'ecosystem.config.js encontrado' 'INFO'
 
     # Verificar que dist/index.js existe
     $indexFile = Join-Path $destMiddleware 'dist/index.js'
     if (-not (Test-Path $indexFile)) {
-        Write-Log "ERROR: dist/index.js no existe en $destMiddleware" 'ERROR'
+        Write-Log ('ERROR: dist/index.js no existe en ' + $destMiddleware) 'ERROR'
         Invoke-Rollback
         exit 8
     }
-    Write-Log "dist/index.js encontrado" 'INFO'
+    Write-Log 'dist/index.js encontrado' 'INFO'
 
-    # Eliminar instancias anteriores
+    # Eliminar instancias anteriores (capturando salida)
     Write-Log 'Eliminando instancias PM2 anteriores...' 'INFO'
-    $delOutput = cmd /c "cd /d `"$destMiddleware`" && `"$pm2Path`" delete all 2>&1"
-    Write-Log "Salida delete: $delOutput" 'INFO'
+    $delOutput = cmd /c 'cd /d "' + $destMiddleware + '" && "' + $pm2Path + '" delete all' 2>&1
+    Write-Log ('Salida delete: ' + $delOutput) 'INFO'
 
     # Arrancar el servicio capturando la salida
     Write-Log 'Iniciando middleware via pm2 start ecosystem.config.js...' 'INFO'
-    $startOutput = cmd /c "cd /d `"$destMiddleware`" && `"$pm2Path`" start ecosystem.config.js 2>&1"
-    Write-Log "Salida start: $startOutput" 'INFO'
+    $startOutput = cmd /c 'cd /d "' + $destMiddleware + '" && "' + $pm2Path + '" start ecosystem.config.js' 2>&1
+    Write-Log ('Salida start: ' + $startOutput) 'INFO'
 
     Start-Sleep -Seconds 3
 
     # Verificar el estado listando los procesos
     $tmpListFile = Join-Path $env:TEMP 'pm2_list_check.txt'
-    cmd /c "cd /d `"$destMiddleware`" && `"$pm2Path`" list --no-color > `"$tmpListFile`" 2>&1
+    cmd /c 'cd /d "' + $destMiddleware + '" && "' + $pm2Path + '" list --no-color > "' + $tmpListFile + '"' 2>&1
 
     $logContent = ''
     if (Test-Path $tmpListFile) {
         $logContent = Get-Content $tmpListFile -Raw
-        Write-Log "Salida pm2 list: $logContent" 'INFO'
+        Write-Log ('Salida pm2 list: ' + $logContent) 'INFO'
     }
 
     if ($logContent -match 'online') {
@@ -510,9 +510,9 @@ Write-Log '===========================================' 'INFO'
 Write-Log 'INSTALACION COMPLETADA EXITOSAMENTE' 'OK'
 Write-Log '===========================================' 'INFO'
 Write-Log 'UI del middleware: http://localhost:4567' 'INFO'
-Write-Log "User: $DefaultUsername" 'INFO'
-Write-Log "Password: $DefaultPassword" 'INFO'
-Write-Log "Log completo: $LogFile" 'INFO'
+Write-Log ('User: ' + $DefaultUsername) 'INFO'
+Write-Log ('Password: ' + $DefaultPassword) 'INFO'
+Write-Log ('Log completo: ' + $LogFile) 'INFO'
 Write-Log 'Cambiar API Key desde UI > Configuracion' 'INFO'
 
 exit 0
