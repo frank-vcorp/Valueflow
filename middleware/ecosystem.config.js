@@ -2,7 +2,7 @@ module.exports = {
   apps: [{
     name: 'siemens-middleware',
     script: 'dist/index.js',
-    cwd: 'C:/apps/siemens-middleware',
+    cwd: 'C:/apps/siemens-middleware/middleware',
     instances: 1,
     autorestart: true,
     watch: false,
