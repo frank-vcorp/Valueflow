@@ -26,7 +26,7 @@
 
 | Campo | Valor |
 |-------|-------|
-| **API Key QUA** | `I1kfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv` |
+| **API Key QUA** | `I1kLfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv` |
 | **Estado API Key** | VÁLIDA |
 | **Base URL** | `https://api.pos.siemens.com` |
 | **Entorno** | `qua` (sandbox) |
@@ -59,7 +59,7 @@
 ### Variable de entorno (de `.env`)
 
 ```
-SIEMENS_API_KEY=I1kfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv
+SIEMENS_API_KEY=I1kLfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv
 ```
 
 ### Headers HTTP requeridos
@@ -121,7 +121,7 @@ SIEMENS_API_KEY=I1kfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv
 curl -s --http2 \
   -X POST \
   -H "Content-Type: application/json" \
-  -H "X-API-KEY: I1kfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv" \
+  -H "X-API-KEY: I1kLfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv" \
   -d '[{
     "distributor_sender_id": "MX-REPRESENTACIONES",
     "distributor_inventory_date": "2026-08-07",
@@ -142,7 +142,7 @@ curl -s --http2 \
 curl -s --http2 \
   -X POST \
   -H "Content-Type: application/json" \
-  -H "X-API-KEY: I1kfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv" \
+  -H "X-API-KEY: I1kLfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv" \
   -d '[{
     "distributor_sender_id": "MX-REPRESENTACIONES",
     "distributor_invoice_number": "TEST-INV-001",
@@ -527,7 +527,7 @@ ce6ab61 fix(installer): v2.0.5 fixes simples Copy-Item + npm install
 | Pregunta | Respuesta |
 |----------|-----------|
 | ¿La API de Siemens QUA funciona? | **SI** |
-| ¿La API key QUA es valida? | **SI** (I1kfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv) |
+| ¿La API key QUA es valida? | **SI** (I1kLfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv) |
 | ¿El middleware puede comunicarse? | **SI** |
 | ¿Hay bloqueadores tecnicos? | **NO** (solo B5 y B7 que son externos) |
 | ¿Se puede hacer go-live a QUA? | **SI**, pendiente solo B5 (rotar key) y B7 (confirmar mapeo) |
