@@ -6,7 +6,7 @@
 ; ============================================
 
 #define MyAppName "Valueflow Middleware"
-#define MyAppVersion "2.0.0"
+#define MyAppVersion "2.0.1"
 #define MyAppPublisher "VCorp - Representaciones Aga de Saltillo"
 
 [Setup]
@@ -27,7 +27,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Valueflow Middleware Installer
-OutputBaseFilename=Valueflow-Setup-v2.0.0
+OutputBaseFilename=Valueflow-Setup-v2.0.1
 OutputDir=build_output
 
 [Languages]
@@ -49,9 +49,9 @@ Source: "uninstall.bat"; DestDir: "{app}\installer"; Flags: ignoreversion
 ; Instaladores oficiales del sistema (NO portables) - v2.0.0
 ; Deploy a {app}\installer\assets\installers para que install.ps1 los
 ; encuentre via $PSScriptRoot\assets\installers\... (auto-cleanup en uninstall)
-Source: "assets\installers\node-v20.14.0-x64.msi"; DestDir: "{app}\installer\assets\installers"; Flags: ignoreversion
+Source: "assets\installers\node-v20.14.0-x86.msi"; DestDir: "{app}\installer\assets\installers"; Flags: ignoreversion
 Source: "assets\installers\vc_redist.x64.exe"; DestDir: "{app}\installer\assets\installers"; Flags: ignoreversion
-Source: "assets\installers\node-v20.14.0-win-x64.zip"; DestDir: "{app}\installer\assets\installers"; Flags: ignoreversion
+Source: "assets\installers\node-v20.14.0-win-x86.zip"; DestDir: "{app}\installer\assets\installers"; Flags: ignoreversion
 
 ; Assets (logos)
 Source: "..\middleware\public\logo_aga_letras_2.png"; DestDir: "{app}\middleware\public"; Flags: ignoreversion

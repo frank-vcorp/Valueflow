@@ -163,7 +163,7 @@ if ($vcInstalled -eq 1 -or $vcInstalled2022 -eq 1) {
 # ===== 5. INSTALAR NODE.JS (MSI OFICIAL) =====
 Write-Log '=== PASO 5/8: Instalar Node.js 20 LTS (MSI oficial) ===' 'STEP'
 
-$nodeMsiPath = Join-Path $PSScriptRoot 'assets\installers\node-v20.14.0-x64.msi'
+$nodeMsiPath = Join-Path $PSScriptRoot 'assets\installers\node-v20.14.0-x86.msi'
 
 if (-not (Test-Path $nodeMsiPath)) {
     Write-Log "ERROR: No se encuentra $nodeMsiPath" 'ERROR'
