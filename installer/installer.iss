@@ -1,20 +1,20 @@
 ﻿; ============================================
 ; Valueflow Middleware - Inno Setup Script
-; v2.0.17 - Cron editable amigable + campos opcionales segun spec Siemens
+; v2.0.18 - FIX-20260807-22 detectar FIREBIRD_PASSWORD vacio
 ; Compilable con ISCC.exe v6.x o v7.x
-; Output: build_output\Valueflow-Setup-v2.0.17.exe
-; ID de intervencion: IMPL-20260807-09 (FIX-20260807-19 a FIX-20260807-21 sincronizado)
+; Output: build_output\Valueflow-Setup-v2.0.18.exe
+; ID de intervencion: IMPL-20260807-10 (FIX-20260807-22)
 ; ============================================
 
 #define MyAppName "Valueflow Middleware"
-#define MyAppVersion "2.0.17"
+#define MyAppVersion "2.0.18"
 #define MyAppPublisher "VCorp - Representaciones Aga de Saltillo"
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-AppVerName={#MyAppName} v2.0.17 (build 2026-08-07)
+AppVerName={#MyAppName} v2.0.18 (build 2026-08-07)
 AppPublisher={#MyAppPublisher}
 ; B6: Path unificado a C:\apps\siemens-middleware (evita UAC + espacios de Program Files).
 ; install.ps1, uninstall.bat y ecosystem.config.js ya apuntan a este path.
@@ -30,7 +30,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Valueflow Middleware Installer
-OutputBaseFilename=Valueflow-Setup-v2.0.17
+OutputBaseFilename=Valueflow-Setup-v2.0.18
 OutputDir=build_output
 
 [Languages]
@@ -51,7 +51,7 @@ Source: "..\middleware\*"; DestDir: "{app}\middleware"; Flags: ignoreversion rec
 ; Bundle self-contained con node_modules pre-instalado portable (Opcion B-1).
 ; install.ps1 (PASO 7) busca este zip en {app}\installer\assets y lo expande
 ; si no encuentra node_modules\node-firebird\package.json directo en destino.
-Source: "..\dist-pkg\valueflow-middleware-v2.0.17.zip"; DestDir: "{app}\installer\assets"; Flags: ignoreversion
+Source: "..\dist-pkg\valueflow-middleware-v2.0.18.zip"; DestDir: "{app}\installer\assets"; Flags: ignoreversion
 
 ; Scripts del instalador
 Source: "install.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
