@@ -1,4 +1,4 @@
-﻿#Requires -RunAsAdministrator
+#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
     Instalador robusto de Valueflow Middleware v2.0.4
@@ -489,7 +489,7 @@ Write-Log '[WARN] FIREBIRD_PASSWORD no proporcionado por wizard, usando default 
 
 $envLines = @(
     "FIREBIRD_PASSWORD=masterkey",
-    "SIEMENS_API_KEY=<api_key_a_configurar>",
+    "SIEMENS_API_KEY=I1kfmP6usaWdVAE2iF4i3EnGEbU5rMYaiQJSgbv",
     "UI_PORT=4567",
     "UI_USERNAME=$resolvedUsername",
     "LOG_LEVEL=info",
