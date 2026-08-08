@@ -2,7 +2,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
 
-dotenv.config();
+// FIX-20260807-02: dotenv.config() no tolera BOM UTF-8 por default.
+// install.ps1 (PowerShell 5.1) escribe .env con BOM al usar Set-Content,
+// lo cual hace que FIREBIRD_PASSWORD, SIEMENS_API_KEY, etc queden con
+// el BOM como prefijo y rompen la validacion. Cargamos el .env manualmente
+// sin BOM antes de pasar a dotenv.parse().
+const envPath = path.resolve(process.env.DOTENV_PATH ?? '.env');
+if (fs.existsSync(envPath)) {
+  const buffer = fs.readFileSync(envPath);
+  let start = 0;
+  if (buffer.length >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) {
+    start = 3;
+  }
+  const text = buffer.toString('utf8', start);
+  const parsed = dotenv.parse(text);
+  for (const [k, v] of Object.entries(parsed)) {
+    if (process.env[k] === undefined) process.env[k] = v;
+  }
+} else {
+  dotenv.config();
+}
 
 function required(name: string, developmentFallback?: string): string {
   const value = process.env[name] ?? developmentFallback;
@@ -44,7 +63,16 @@ export const envFilePath = path.resolve(process.env.DOTENV_PATH ?? '.env');
  */
 export function updateEnvVariable(name: string, value: string): void {
   const exists = fs.existsSync(envFilePath);
-  const lines = exists ? fs.readFileSync(envFilePath, 'utf8').split(/\r?\n/) : [];
+  // FIX-20260807-02: tolerar BOM al leer .env
+  let lines: string[] = [];
+  if (exists) {
+    const buffer = fs.readFileSync(envFilePath);
+    let start = 0;
+    if (buffer.length >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) {
+      start = 3;
+    }
+    lines = buffer.toString('utf8', start).split(/\r?\n/);
+  }
   const pattern = new RegExp(`^${name}=`);
   let replaced = false;
   const next = lines.map((line) => {

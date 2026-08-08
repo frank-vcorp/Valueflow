@@ -9,6 +9,13 @@ interface FirebirdOptions {
   database: string;
   user: string;
   password: string;
+  // FIX-20260807-02: charset explicito. La BD Aspel SAE usa ISO8859_1
+  // (verificado con FlameRobin 2026-08-07). Sin esto, node-firebird
+  // defaultea a NONE y el servidor Firebird emite warning
+  // "Database charset: ISO8859_1 is different from connection charset: NONE".
+  // Ademas, sin charset correcto, las queries retornan strings con
+  // caracteres ilegibles en columnas con acentos/eñes.
+  charset?: string;
 }
 
 /**
@@ -57,6 +64,7 @@ class FirebirdPool {
       database: db.db_path,
       user: db.user,
       password: env.firebirdPassword,
+      charset: 'ISO8859_1',
     };
   }
 
@@ -108,25 +116,25 @@ class FirebirdPool {
       try {
         db = await this.acquire();
         const rows = await new Promise<T[]>((resolve, reject) => {
+          // FIX-20260807-04: NO extraer `const execute = db.execute` antes de
+          // invocarlo. node-firebird@1.1.10 accede a `self.connection` internamente
+          // y rompe cuando el método se llama desvinculado del objeto (`this` se pierde).
+          // Llamar directamente `db.execute(...)` preserva el binding.
           // asObject:false → filas como arrays indexados (row[0], row[1], …),
           // retrocompatible con los consumidores inventory.ts y sales.ts.
-          // El 4º arg `custom` no está declarado en los @types de node-firebird
-          // aunque el runtime JS lo soporta; usamos cast tipado para no perder
-          // strict mode en el resto del código.
           const params = Array.isArray(parameters) ? parameters : [parameters];
-          const execute = db!.execute as (
-            q: string,
-            p: unknown[],
-            cb: (err: unknown, result: unknown) => void,
-            custom: { asObject: boolean }
-          ) => Firebird.Database;
-          execute(sql, params, (err: unknown, result: unknown) => {
-            if (err) {
-              reject(err instanceof Error ? err : new Error(String(err)));
-              return;
-            }
-            resolve(result as T[]);
-          }, { asObject: false });
+          db!.execute(
+            sql,
+            params,
+            (err: unknown, result: unknown) => {
+              if (err) {
+                reject(err instanceof Error ? err : new Error(String(err)));
+                return;
+              }
+              resolve(result as T[]);
+            },
+            { asObject: false }
+          );
         });
         if (Date.now() - started > 5000) {
           logger.warn('Query Firebird lenta', { duration_ms: Date.now() - started, rows: rows.length });

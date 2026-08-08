@@ -113,6 +113,13 @@ Write-Log "Windows $($osInfo.Caption) x64 ($($osInfo.Version))" 'OK'
 # ===== 3. VERIFICAR FIREBIRD =====
 Write-Log '=== PASO 3/8: Verificar Firebird 2.5+ (instalado por Aspel) ===' 'STEP'
 
+# IMPL-20260807-03 (escenario a): el middleware usa `node-firebird` (driver JS puro,
+# sin bindings nativos). NO requiere fbclient.dll cliente para funcionar — el
+# driver habla el protocolo wire-level directo contra el servidor Firebird en
+# localhost:3050 (parte de Aspel SAE). Antes esto era un exit 3 bloqueante; ahora
+# es un WARN informativo para mantener trazabilidad sin abortar la instalacion
+# cuando el .dll cliente no esta (caso tipico: VM con Aspel SAE sin Firebird
+# Client Tools adicionales).
 $fbclientPaths = @(
     'C:\Windows\System32\fbclient.dll',
     'C:\Windows\SysWOW64\FBCLIENT.DLL',
@@ -128,12 +135,11 @@ foreach ($path in $fbclientPaths) {
     }
 }
 
-if (-not $fbclientFound) {
-    Write-Log 'ERROR: No se encontro fbclient.dll en ninguna ruta comun' 'ERROR'
-    Write-Log 'Firebird 2.5 Client Tools debe estar instalado (parte de Aspel SAE)' 'ERROR'
-    exit 3
+if ($fbclientFound) {
+    Write-Log "fbclient.dll encontrado en: $fbclientFound (no requerido para node-firebird JS puro; OK)" 'OK'
+} else {
+    Write-Log 'WARN: fbclient.dll no encontrado en rutas comunes. No es bloqueante: el middleware usa node-firebird (JS puro) que conecta directo al servidor Firebird en localhost:3050 via wire protocol. Asegurate de que Aspel SAE / Firebird server este corriendo en localhost:3050.' 'WARN'
 }
-Write-Log "fbclient.dll encontrado en: $fbclientFound" 'OK'
 
 # ===== 4. INSTALAR VC++ REDISTRIBUTABLE =====
 Write-Log '=== PASO 4/8: Instalar VC++ Redistributable 2015-2022 ===' 'STEP'
@@ -246,33 +252,63 @@ if (-not $bundlePath) {
 
 Write-Log "Bundle encontrado en: $bundlePath" 'OK'
 
+# H6: Leer FIREBIRD_DB_PATH= del .ini escrito por el wizard Inno Setup
+# (installer.iss:128-131 -> {tmp}\valueflow_install_config.ini con formato
+#  FIREBIRD_DB_PATH=<ruta>\r\n). Si no existe o la key falta, fallback al
+#  default del parametro -AselBdPath.
+$wizardIniPath = Join-Path $env:TEMP 'valueflow_install_config.ini'
+if (Test-Path $wizardIniPath) {
+    $wizardIniContent = Get-Content $wizardIniPath -Raw
+    if ($wizardIniContent -match '(?m)^FIREBIRD_DB_PATH=(.+?)\r?$') {
+        $wizardDbPath = $matches[1].Trim()
+        if ($wizardDbPath -ne '') {
+            Write-Log "FIREBIRD_DB_PATH leido del wizard: $wizardDbPath" 'INFO'
+            $AselBdPath = $wizardDbPath
+        } else {
+            Write-Log '[WARN] FIREBIRD_DB_PATH vacio en wizard .ini, usando default -AselBdPath' 'WARN'
+        }
+    } else {
+        Write-Log '[WARN] key FIREBIRD_DB_PATH no encontrada en wizard .ini, usando default -AselBdPath' 'WARN'
+    }
+} else {
+    Write-Log "[WARN] wizard .ini no encontrado en $wizardIniPath, usando default -AselBdPath" 'WARN'
+}
+
 $sourceMiddleware = Join-Path $bundlePath 'middleware'
 
 $destMiddleware = Join-Path $InstallDir 'middleware'
-if (Test-Path (Join-Path $destMiddleware 'package.json')) {
-    Write-Log 'Eliminando instalacion anterior de middleware...' 'INFO'
-    Remove-Item -Recurse -Force $destMiddleware -ErrorAction SilentlyContinue
-    # Si aún existe, forzar eliminación de forma agresiva
-    if (Test-Path $destMiddleware) {
-        Write-Log 'Forzando eliminacion de archivos restantes...' 'INFO'
-        Get-ChildItem -Path $destMiddleware -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
-        cmd /c "rmdir /s /q `"$destMiddleware`"" | Out-Null
+
+# H1: Guard in-place. Si el bundle se está ejecutando desde el mismo path destino
+# (ej. pruebas locales con source==dest), NO borrar+copiar: el source ya esta en
+# su lugar final. Cualquier delete borraria el bundle mismo.
+if ($sourceMiddleware -eq $destMiddleware) {
+    Write-Log '[WARN] Instalacion in-place detectada, saltando copia (source==dest)' 'WARN'
+} else {
+    if (Test-Path (Join-Path $destMiddleware 'package.json')) {
+        Write-Log 'Eliminando instalacion anterior de middleware...' 'INFO'
+        Remove-Item -Recurse -Force $destMiddleware -ErrorAction SilentlyContinue
+        # Si aún existe, forzar eliminación de forma agresiva
+        if (Test-Path $destMiddleware) {
+            Write-Log 'Forzando eliminacion de archivos restantes...' 'INFO'
+            Get-ChildItem -Path $destMiddleware -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
+            cmd /c "rmdir /s /q `"$destMiddleware`"" | Out-Null
+        }
     }
-}
 
-# Verificar que se eliminó antes de copiar
-if (Test-Path $destMiddleware) {
-    Write-Log 'ERROR: No se pudo eliminar middleware existente. Cierre procesos node y reintente.' 'ERROR'
-    exit 6
-}
+    # Verificar que se eliminó antes de copiar
+    if (Test-Path $destMiddleware) {
+        Write-Log 'ERROR: No se pudo eliminar middleware existente. Cierre procesos node y reintente.' 'ERROR'
+        exit 6
+    }
 
-Copy-Item -Recurse -Force -Path $sourceMiddleware -Destination $destMiddleware
-Register-Rollback { Remove-Item -Recurse -Force $destMiddleware -ErrorAction SilentlyContinue }
+    Copy-Item -Recurse -Force -Path $sourceMiddleware -Destination $destMiddleware
+    Register-Rollback { Remove-Item -Recurse -Force $destMiddleware -ErrorAction SilentlyContinue }
 
-if (-not (Test-Path (Join-Path $destMiddleware 'package.json'))) {
-    Write-Log 'ERROR: La copia fallo (no se encontro package.json en destino)' 'ERROR'
-    Invoke-Rollback
-    exit 6
+    if (-not (Test-Path (Join-Path $destMiddleware 'package.json'))) {
+        Write-Log 'ERROR: La copia fallo (no se encontro package.json en destino)' 'ERROR'
+        Invoke-Rollback
+        exit 6
+    }
 }
 
 $fileCount = (Get-ChildItem $destMiddleware -Recurse -File | Measure-Object).Count
@@ -289,16 +325,87 @@ if (-not $npmCmd) {
     exit 7
 }
 Write-Log "Usando npm: $npmCmd" 'INFO'
-# Ejecutar npm install usando cmd para capturar exit code correctamente
-cmd /c "cd /d `"$destMiddleware`" && `"$npmCmd`" install --omit=dev --no-audit --no-fund"
-$npmExit = $LASTEXITCODE
-if ($npmExit -ne 0) {
-    Write-Log "ERROR: npm install fallo con codigo: $npmExit" 'ERROR'
-    Invoke-Rollback
-    exit 7
+
+# IMPL-20260807-03 (bundle self-contained): si el bundle v2.0.11 trae node_modules
+# pre-instalado portable (preparado por prepare-dist-pkg.sh), saltamos npm install
+# para evitar dependencia de internet/proxy/firewall en la VM cliente. Fallback:
+# si node_modules no esta presente (instalacion legacy o bundle sin preparar),
+# se hace npm install normalmente.
+$nodeFirebirdPkg = Join-Path $destMiddleware 'node_modules\node-firebird\package.json'
+$skipNpmInstall = $false
+
+# Opcion B-1 (installer.iss): si no hay node_modules directo, buscar el bundle.zip
+# en {app}\installer\assets\ (asset embed en el .exe) y extraerlo como fallback
+# para obtener node_modules portable sin depender de internet.
+$assetsZipDir = Join-Path $PSScriptRoot 'assets'
+$bundleZip = $null
+if (-not (Test-Path $nodeFirebirdPkg) -and (Test-Path $assetsZipDir)) {
+    Write-Log 'node_modules ausente; buscando bundle.zip de fallback en assets...' 'INFO'
+    $candidateZips = Get-ChildItem -Path $assetsZipDir -Filter 'valueflow-middleware-*.zip' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending
+    if ($candidateZips -and $candidateZips.Count -gt 0) {
+        $bundleZip = $candidateZips[0].FullName
+        Write-Log "bundle.zip encontrado: $bundleZip" 'INFO'
+    }
 }
 
-Write-Log 'npm install completado correctamente' 'OK'
+if ($bundleZip) {
+    try {
+        $expandRoot = Join-Path $env:TEMP "valueflow_zip_$([System.IO.Path]::GetRandomFileName())"
+        New-Item -ItemType Directory -Path $expandRoot -Force | Out-Null
+        Write-Log "Expandiendo bundle.zip a $expandRoot ..." 'INFO'
+        # Expand-Archive es nativo en PS 5.1; maneja paths con espacios y UTF-8.
+        Expand-Archive -Path $bundleZip -DestinationPath $expandRoot -Force
+        # Localizar middleware/ dentro del zip. El zip tiene raiz
+        # valueflow-middleware-v2.0.11/middleware/, asi que buscamos el primer
+        # directorio que contenga package.json con name=repaga-siemens-middleware.
+        $zipMiddleware = $null
+        Get-ChildItem -Path $expandRoot -Recurse -Directory -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName 'package.json') } |
+            ForEach-Object {
+                $pkgJson = Get-Content (Join-Path $_.FullName 'package.json') -Raw -ErrorAction SilentlyContinue
+                if ($pkgJson -and $pkgJson -match '"name"\s*:\s*"repaga-siemens-middleware"') {
+                    $zipMiddleware = $_.FullName
+                }
+            }
+        if ($zipMiddleware -and (Test-Path (Join-Path $zipMiddleware 'node_modules\node-firebird\package.json'))) {
+            $destNodeModules = Join-Path $destMiddleware 'node_modules'
+            if (Test-Path $destNodeModules) {
+                Write-Log 'Reemplazando node_modules en destino con el del bundle.zip...' 'INFO'
+                Remove-Item -Recurse -Force $destNodeModules -ErrorAction SilentlyContinue
+            }
+            Copy-Item -Recurse -Force -Path (Join-Path $zipMiddleware 'node_modules') -Destination $destMiddleware
+            Write-Log "node_modules restaurado desde bundle.zip ($((Get-ChildItem $destNodeModules -Recurse -File | Measure-Object).Count) archivos)" 'OK'
+        } else {
+            Write-Log 'WARN: bundle.zip no contiene middleware/node_modules con node-firebird; fallback a npm install' 'WARN'
+        }
+    } catch {
+        Write-Log "WARN: fallo extrayendo bundle.zip ($($_.Exception.Message)); fallback a npm install" 'WARN'
+    } finally {
+        if (Test-Path $expandRoot) { Remove-Item -Recurse -Force $expandRoot -ErrorAction SilentlyContinue }
+    }
+}
+
+if (Test-Path $nodeFirebirdPkg) {
+    Write-Log 'node_modules pre-instalado en bundle (self-contained), saltando npm install' 'OK'
+    $skipNpmInstall = $true
+} else {
+    Write-Log 'node_modules no encontrado en bundle, ejecutando npm install' 'INFO'
+    $skipNpmInstall = $false
+}
+
+if (-not $skipNpmInstall) {
+    # Ejecutar npm install usando cmd para capturar exit code correctamente
+    cmd /c "cd /d `"$destMiddleware`" && `"$npmCmd`" install --ignore-scripts --omit=dev --no-audit --no-fund"
+    $npmExit = $LASTEXITCODE
+    if ($npmExit -ne 0) {
+        Write-Log "ERROR: npm install fallo con codigo: $npmExit" 'ERROR'
+        Invoke-Rollback
+        exit 7
+    }
+    Write-Log 'npm install completado correctamente' 'OK'
+} else {
+    Write-Log 'Skip npm install: bundle self-contained (node_modules pre-instalado)' 'OK'
+}
 
 if (-not (Test-Path (Join-Path $destMiddleware 'node_modules\bcryptjs\package.json'))) {
     Write-Log 'ERROR: bcryptjs no se instalo' 'ERROR'
@@ -332,24 +439,69 @@ Remove-Item $passwordFile, $jsFile -Force -ErrorAction SilentlyContinue
 $bcryptHash = ($bcryptRaw | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | Out-String).Trim()
 
 if ($bcryptExit -ne 0 -or $bcryptHash -notmatch '^\$2[ayb]\$') {
-    Write-Log "WARN: No se pudo generar bcrypt (exit $bcryptExit), usando fallback" 'WARN'
-    $bcryptHash = '$2b$12$' + [System.Convert]::ToBase64String((1..22 | ForEach-Object { Get-Random -Maximum 255 }))
-} else {
-    Write-Log 'bcrypt generado correctamente' 'OK'
+    Write-Log ("ERROR: No se pudo generar bcrypt hash valido (exit=$bcryptExit, hash='$bcryptHash'). " +
+        'Instalacion abortada para evitar login roto.') 'ERROR'
+    Write-Log 'Diagnostico: bcryptjs no responde, hash corrupto, o node no escribio al stdout.' 'ERROR'
+    Invoke-Rollback
+    exit 7
+}
+
+# Validar hash generado contra password conocido (regresion: B1 v2.0.8 -> login fallaba
+# porque el hash random no correspondia a $DefaultPassword). Si compareSync falla, abortar.
+$verifyFile = Join-Path $env:TEMP 'valueflow_bcrypt_verify.txt'
+$verifyJs = Join-Path $destMiddleware 'valueflow_bcrypt_verify.js'
+try {
+    [System.IO.File]::WriteAllText($verifyFile, $DefaultPassword)
+    $verifyCode = 'const fs=require("fs");const b=require("bcryptjs");const p=fs.readFileSync(process.argv[2],"utf8").trim();const h=process.argv[3];console.log(b.compareSync(p,h) ? "OK" : "FAIL");'
+    [System.IO.File]::WriteAllText($verifyJs, $verifyCode)
+    $verifyRaw = & node $verifyJs $verifyFile $bcryptHash 2>&1
+    $verifyExit = $LASTEXITCODE
+    $verifyResult = ($verifyRaw | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | Out-String).Trim()
+    if ($verifyExit -ne 0 -or $verifyResult -ne 'OK') {
+        Write-Log ("ERROR: bcrypt hash generado NO valida contra password por defecto (verify='$verifyResult', exit=$verifyExit). " +
+            'Instalacion abortada para evitar login roto.') 'ERROR'
+        Invoke-Rollback
+        exit 7
+    }
+    Write-Log "bcrypt hash validado contra password por defecto (compareSync=OK)" 'OK'
+} finally {
+    Remove-Item $verifyFile, $verifyJs -Force -ErrorAction SilentlyContinue
 }
 
 # Escribir/actualizar .env (en el directorio del middleware, donde PM2 arranca)
 $envPath = Join-Path $destMiddleware '.env'
+
+# B2: Normalizar UI_USERNAME. Middleware compara case-sensitive (server.ts:31),
+# el log final anuncia "Admin" pero el .env debe coincidir exactamente.
+if ($DefaultUsername -cne 'Admin') {
+    Write-Log ("WARN: UI_USERNAME pasado como '$DefaultUsername'; se normaliza a 'Admin' para coincidir con el caso que anuncia el instalador y espera el middleware.") 'WARN'
+    $resolvedUsername = 'Admin'
+} else {
+    $resolvedUsername = 'Admin'
+}
+
+# B4: Advertir explicitamente que FIREBIRD_PASSWORD queda con default si el wizard no lo lo proveyo.
+# (El wizard actual - installer.iss - solo pide ruta del FDB, no password.)
+# FIX-20260807-03: default debe ser 'masterkey' (lowercase) que es el default de
+# Aspel SAE 9.0/10.0 para el usuario SYSDBA. v2.0.13 tenia 'MASTERKEY' (uppercase)
+# lo cual causaba 'Your user name and password are not defined' al conectar a la BD.
+Write-Log '[WARN] FIREBIRD_PASSWORD no proporcionado por wizard, usando default masterkey (lowercase, default Aspel SAE). Cambialo en UI > Configuracion.' 'WARN'
+
 $envLines = @(
     "FIREBIRD_PASSWORD=masterkey",
     "SIEMENS_API_KEY=<api_key_a_configurar>",
     "UI_PORT=4567",
-    "UI_USERNAME=$DefaultUsername",
+    "UI_USERNAME=$resolvedUsername",
     "LOG_LEVEL=info",
-    "LOG_DIR=logs",
-    "UI_PASSWORD_HASH=$bcryptHash"
+    "LOG_DIR=C:\apps\siemens-middleware\logs",
+    "UI_PASSWORD_HASH=$bcryptHash",
+    "DATA_SOURCE=production"
 )
-Set-Content -Path $envPath -Value $envLines -Encoding UTF8
+# FIX-20260807-02: Set-Content -Encoding UTF8 en PS 5.1 SIEMPRE escribe BOM (EF BB BF).
+# El BOM rompe JSON.parse() y dotenv al cargar el archivo. Usamos UTF8Encoding($false)
+# que escribe UTF-8 puro sin BOM.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($envPath, ($envLines -join "`r`n") + "`r`n", $utf8NoBom)
 Write-Log '.env configurado' 'OK'
 
 # Escribir config.json (en el directorio del middleware, donde PM2 arranca)
@@ -400,7 +552,8 @@ $configContent = @{
         }
     }
 } | ConvertTo-Json -Depth 10
-Set-Content -Path $configPath -Value $configContent -Encoding UTF8
+# FIX-20260807-02: sin BOM. Ver comentario arriba sobre .env.
+[System.IO.File]::WriteAllText($configPath, $configContent, $utf8NoBom)
 Write-Log 'config.json configurado' 'OK'
 
 # Instalar PM2 si hace falta
@@ -447,50 +600,95 @@ if ($pm2Path) {
     }
     Write-Log 'ecosystem.config.js encontrado' 'INFO'
 
-    # Verificar que dist/index.js existe
+    # Verificar que dist/index.js existe. Si no, ejecutar build (bundle sin dist precompilado).
     $indexFile = Join-Path $destMiddleware 'dist/index.js'
     if (-not (Test-Path $indexFile)) {
-        Write-Log ('ERROR: dist/index.js no existe en ' + $destMiddleware) 'ERROR'
+        Write-Log ('dist/index.js no existe en ' + $destMiddleware + '; ejecutando npm run build (bundle sin dist precompilado)...') 'INFO'
+        Register-Rollback { Write-Log 'Build del middleware no aplicado automaticamente en rollback' 'WARN' }
+        # H7: el install principal uso --omit=dev (linea ~293), asi que tsc/typescript
+        # no estan instalados. Necesitamos devDependencies para poder hacer build.
+        $installDev = cmd /c 'cd /d "' + $destMiddleware + '" && "' + $npmCmd + '" install --include=dev --no-audit --no-fund' 2>&1
+        $installDevExit = $LASTEXITCODE
+        Write-Log ("Salida npm install --include=dev: " + $installDev) 'INFO'
+        if ($installDevExit -ne 0) {
+            Write-Log "ERROR: npm install --include=dev fallo (exit=$installDevExit) en fallback build" 'ERROR'
+            Invoke-Rollback
+            exit 7
+        }
+        $buildOutput = cmd /c 'cd /d "' + $destMiddleware + '" && "' + $npmCmd + '" run build' 2>&1
+        $buildExit = $LASTEXITCODE
+        Write-Log ('Salida build: ' + $buildOutput) 'INFO'
+        if ($buildExit -ne 0 -or -not (Test-Path $indexFile)) {
+            Write-Log ("ERROR: npm run build fallo (exit=$buildExit) o dist/index.js sigue sin existir. Instalacion abortada.") 'ERROR'
+            Invoke-Rollback
+            exit 7
+        }
+        Write-Log 'npm run build OK; dist/index.js generado' 'OK'
+    } else {
+        Write-Log 'dist/index.js encontrado (bundle precompilado, skip build)' 'INFO'
+    }
+    Write-Log 'dist/index.js verificado' 'INFO'
+
+    # IMPL-20260807-04 (FIX-20260807-01, mini-SPEC §4 criterios 1-6):
+    # - Push-Location garantiza cwd del middleware durante pm2 delete/start.
+    # - $LASTEXITCODE se captura INMEDIATAMENTE despues de cada invocacion,
+    #   ANTES de loguear la salida (no se mete en pipeline ForEach-Object, que
+    #   en PS 5.1 no propaga $LASTEXITCODE al ambito padre).
+    # - pm2 delete NO aborta si falla: la limpieza es idempotente y en una
+    #   instalacion limpia no existe instancia previa.
+    # - pm2 start ES FATAL si falla: aborta la instalacion con error claro.
+    # - Verificacion de puerto 4567 con polling 2s/timeout 30s (no chequeo unico).
+    # - Pop-Location en finally garantiza restauracion del cwd del script.
+    Push-Location $destMiddleware
+    try {
+        # Eliminar instancias anteriores (limpieza idempotente, NO aborta)
+        Write-Log 'Eliminando instancias PM2 anteriores (idempotente)...' 'INFO'
+        $delOutput = & $pm2Path delete all 2>&1
+        $delExit = $LASTEXITCODE
+        Write-Log ('Salida delete: ' + ($delOutput | Out-String)) 'INFO'
+        if ($delExit -ne 0) {
+            Write-Log ("pm2 delete retorno exit code no-cero ($delExit); continuando (limpieza idempotente)") 'WARN'
+        }
+
+        # Arrancar el servicio (FATAL si falla)
+        Write-Log ('Iniciando middleware via pm2 start ' + $ecoFile + '...') 'INFO'
+        $startOutput = & $pm2Path start $ecoFile 2>&1
+        $startExit = $LASTEXITCODE  # capturar ANTES de pipe a Out-String
+        Write-Log ('Salida start (exit=' + $startExit + '): ' + ($startOutput | Out-String)) 'INFO'
+        if ($startExit -ne 0) {
+            Write-Log ("ERROR: pm2 start fallo con exit code $startExit. Instalacion abortada.") 'ERROR'
+            throw "pm2 start failed with exit code $startExit"
+        }
+    } finally {
+        Pop-Location
+    }
+
+    # Polling puerto 4567 con timeout 30s (warm-up de node-firebird puede tardar)
+    Write-Log 'Verificando puerto 4567 LISTENING (polling 2s, timeout 30s)...' 'INFO'
+    $portReady = $false
+    $portDeadline = (Get-Date).AddSeconds(30)
+    $pollAttempt = 0
+    while ((Get-Date) -lt $portDeadline) {
+        $pollAttempt++
+        $portCheck = netstat -an 2>&1 | Select-String ':4567\s.*LISTENING'
+        if ($portCheck) {
+            $portReady = $true
+            break
+        }
+        Start-Sleep -Seconds 2
+    }
+    if ($portReady) {
+        Write-Log ("Servicio online: puerto 4567 LISTENING (confirmado en intento $pollAttempt)") 'OK'
+    } else {
+        Write-Log 'ERROR: puerto 4567 NO bindeado despues de 30s. Instalacion abortada.' 'ERROR'
+        Write-Log 'Diagnostico: revisar pm2 logs y middleware\logs\*.log para causa raiz.' 'ERROR'
         Invoke-Rollback
         exit 8
     }
-    Write-Log 'dist/index.js encontrado' 'INFO'
-
-    # Eliminar instancias anteriores (capturando salida)
-    Write-Log 'Eliminando instancias PM2 anteriores...' 'INFO'
-    $delOutput = cmd /c 'cd /d "' + $destMiddleware + '" && "' + $pm2Path + '" delete all' 2>&1
-    Write-Log ('Salida delete: ' + $delOutput) 'INFO'
-
-    # Arrancar el servicio capturando la salida
-    Write-Log 'Iniciando middleware via pm2 start ecosystem.config.js...' 'INFO'
-    $startOutput = cmd /c 'cd /d "' + $destMiddleware + '" && "' + $pm2Path + '" start ecosystem.config.js' 2>&1
-    Write-Log ('Salida start: ' + $startOutput) 'INFO'
-
-    Start-Sleep -Seconds 3
-
-    # Verificar el estado listando los procesos
-    $tmpListFile = Join-Path $env:TEMP 'pm2_list_check.txt'
-    cmd /c 'cd /d "' + $destMiddleware + '" && "' + $pm2Path + '" list --no-color > "' + $tmpListFile + '"' 2>&1
-
-    $logContent = ''
-    if (Test-Path $tmpListFile) {
-        $logContent = Get-Content $tmpListFile -Raw
-        Write-Log ('Salida pm2 list: ' + $logContent) 'INFO'
-    }
-
-    if ($logContent -match 'online') {
-        Write-Log 'Servicio arrancado correctamente (online)' 'OK'
-    } elseif ($logContent -match 'stopped') {
-        Write-Log 'Servicio arranco pero esta stopped - revisar logs' 'WARN'
-    } elseif ($logContent -match 'errored') {
-        Write-Log 'PM2 reporto error - revisar logs manualmente' 'WARN'
-    } else {
-        Write-Log 'Estado del servicio desconocido - revisar manualmente' 'WARN'
-    }
-
-    Remove-Item $tmpListFile -ErrorAction SilentlyContinue
 } else {
-    Write-Log 'WARN: pm2.cmd no encontrado, saltando arranque' 'WARN'
+    Write-Log 'ERROR: pm2.cmd no encontrado en PATH ni en %APPDATA%\npm\pm2.cmd. Instalacion abortada.' 'ERROR'
+    Invoke-Rollback
+    exit 8
 }
 
 # Crear acceso directo en escritorio

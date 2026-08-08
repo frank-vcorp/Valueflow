@@ -101,9 +101,29 @@ export function validateRuntimeConfig(value: unknown): asserts value is RuntimeC
   }
 }
 
+/**
+ * Lee un archivo JSON tolerando BOM UTF-8 (EF BB BF) que algunos editores
+ * Windows / PowerShell Set-Content meten al guardar. JSON.parse NO tolera
+ * el BOM y lanza "Unexpected token" matando el proceso. Esta función
+ * normaliza quitando el BOM antes de parsear.
+ *
+ * FIX-20260807-02: instalado en v2.0.13 para soportar archivos generados
+ * por install.ps1 (que escribe con BOM por default en PS 5.1).
+ */
+function readJsonFile(filePath: string): unknown {
+  const buffer = fs.readFileSync(filePath);
+  // Detectar BOM UTF-8 (EF BB BF)
+  let start = 0;
+  if (buffer.length >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) {
+    start = 3;
+  }
+  const text = buffer.toString('utf8', start);
+  return JSON.parse(text);
+}
+
 export function readRuntimeConfig(): RuntimeConfig {
   const source = fs.existsSync(configPath) ? configPath : examplePath;
-  const parsed: unknown = JSON.parse(fs.readFileSync(source, 'utf8'));
+  const parsed: unknown = readJsonFile(source);
   validateRuntimeConfig(parsed);
   return parsed;
 }
@@ -111,6 +131,7 @@ export function readRuntimeConfig(): RuntimeConfig {
 export function writeRuntimeConfig(config: RuntimeConfig): void {
   validateRuntimeConfig(config);
   const tempPath = `${configPath}.tmp`;
+  // Escribir SIN BOM (utf8 en Node.js NO agrega BOM, a diferencia de PowerShell Set-Content).
   fs.writeFileSync(tempPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   fs.renameSync(tempPath, configPath);
 }

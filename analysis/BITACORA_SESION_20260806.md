@@ -396,5 +396,96 @@ Get-Content "C:\Program Files\siemens-middleware\middleware\config.json"
 
 ---
 
-**Ultima actualizacion:** 2026-08-06 14:36 CST
-**Estado:** Instalable v1.2.0 listo para Frank. Pendiente: ejecutar limpieza total + instalacion limpia.
+**Ultima actualizacion (sesion previa):** 2026-08-06 14:36 CST
+**Estado (sesion previa):** Instalable v1.2.0 listo para Frank. Pendiente: ejecutar limpieza total + instalacion limpia.
+
+---
+
+# 🚨 SESIÓN POSTERIOR — Hilo ATLAS-M3 escalado a INTEGRA (2026-08-06 22:47 CST)
+
+**Sesión:** 2026-08-06 22:47 CST (continuación)
+**Operador:** INTEGRA (Spark 1.1) — recibió handoff de ATLAS-M3 (rol explorador, ilimitado)
+**Contexto:** Lote `lote-ventas-20260805-01` EXPIRADO. Cliente SIN servicio tras instalador v2.0.8 falla sistémica.
+
+## Resumen ejecutivo
+
+ATLAS-M3 preparó handoff a INTEGRA tras detectar falla sistémica del instalador v2.0.8 en VM Windows 11 del cliente. El instalador "completó exitosamente" según su log, pero el bundle quedó en `Downloads` (no en ruta final), `dist/` no se compiló, PM2 levantó slot zombi (pid 3400 muerto, puerto 4567 nunca bindeado). Cliente sin acceso a `http://localhost:4567/`.
+
+## Diagnóstico confirmado por INTEGRA (verificación propia, no asume handoff)
+
+| Hallazgo | Confirmación en código |
+|----------|------------------------|
+| Mismatch de paths (3 rutas distintas para "el mismo" dir) | `installer/install.ps1:21` → `InstallDir='C:\apps\siemens-middleware'`; `installer/installer.iss:18` → `DefaultDirName={autopf}\siemens-middleware` = `C:\Program Files\siemens-middleware` (x64); `middleware/ecosystem.config.js:5` → `cwd:'C:/apps/siemens-middleware/middleware'` |
+| Bundle v2.0.8 sin `dist/` precompilado | Listado de `dist-pkg/valueflow-middleware-v2.0.8/middleware/` no contiene `dist/` |
+| Instalador no ejecuta `npm run build` visible | No hay step explícito con manejo de error en `install.ps1` |
+| Slot PM2 zombi | `ecosystem.config.js` `script:'dist/index.js'` inexistente → node crashea al arranque → PM2 marca online con pid muerto |
+| Bundle quedó en `Downloads` no en ruta final | `Get-ChildItem -Filter ecosystem.config.js -Recurse C:\` → único resultado en `C:\Users\frank\Downloads\valueflow-middleware\middleware\` |
+| `.env` con bugs colaterales | `FIREBIRD_PASSWORD` vacío; `LOG_DIR=/tmp/siemens-middleware-logs` (path Linux en Windows); `UI_PASSWORD_HASH` presente (OK); `SIEMENS_API_KEY` real en historial git (B5) |
+| Dictamen DEBY `FIX-20260806-01` Bug 3 no resuelto | Confirmado en `context/interconsultas/DICTAMEN_FIX-20260806-01.md:54-72`: copia desde instalable viejo persiste en v2.0.8 |
+
+## Recomendación INTEGRA (G1) — HÍBRIDO A→B
+
+Decisión bloqueante escalada a Frank vía `ask-frank.sh` (ID `ARCH-20260806-01` + followup `ARCH-20260806-02`). El gateway Hermes clasificó ambas consultas como VERDE (autonomous) sin esperar respuesta explícita de Frank, a pesar de lenguaje explícitamente bloqueante. INTEGRA NO procede solo contra protocolo (§2 confianza ~75% <80%, §4 lote expirado + fix v2.0.9 fuera de alcance del lote original, §10 escalar siempre lo irreversible).
+
+**Estado actual:** `BLOCKED (espera-decisión-humana)` para G1.
+
+## Workaround A para Frank (servicio HOY, ~20 min)
+
+Frank ejecuta en PowerShell Admin de la VM. Pasos (descripción natural + comandos clave):
+
+1. **Limpiar slot zombi PM2:** `Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force`; `pm2 kill`; `pm2 delete all`.
+2. **Copiar bundle a path canónico** (coincide con `ecosystem.config.js` cwd): `New-Item -ItemType Directory -Path "C:\apps\siemens-middleware" -Force`; copiar contenido de `C:\Users\frank\Downloads\valueflow-middleware\*` a `C:\apps\siemens-middleware\` con `Copy-Item -Recurse -Force`.
+3. **Instalar deps y compilar `dist/`** (CRÍTICO — el bundle v2.0.8 NO trae `dist/` precompilado, y es la causa raíz del slot zombi): `Set-Location "C:\apps\siemens-middleware\middleware"`; `npm install --no-audit --no-fund`; `npm run build`; verificar `Test-Path "dist\index.js"` devuelve `True`.
+4. **Corregir `.env` (3 bugs colaterales):**
+   - `FIREBIRD_PASSWORD`: llenar con valor real (Frank debe saberlo — SYSDBA default Aspel SAE 9.0).
+   - `LOG_DIR`: cambiar de `/tmp/siemens-middleware-logs` a `C:\apps\siemens-middleware\logs`. Comando: `(Get-Content .env) -replace '^LOG_DIR=.*','LOG_DIR=C:\apps\siemens-middleware\logs' | Set-Content .env`.
+   - `SIEMENS_API_KEY`: **NO pegar key real aquí** (B5 — expuesta en git público). Dejar placeholder, cargar desde UI Configuración → API Key Siemens después del arranque.
+   - `UI_PASSWORD_HASH`: ya presente (OK según ATLAS).
+5. **Arrancar PM2:** `pm2 start ecosystem.config.js`; `Start-Sleep -Seconds 5`; `netstat -an | findstr :4567` (debe mostrar `LISTENING`); `Start-Process "http://localhost:4567/"`.
+6. **Persistencia (opcional, recomendado):** `pm2 save`; `pm2-startup install` para que el servicio sobreviva reinicio de VM.
+
+**Riesgos del workaround A:**
+- No sobrevive a reinicio de VM sin `pm2 save` + `pm2-startup install`.
+- `FIREBIRD_PASSWORD` real en `.env` local (dato sensible — no commitear).
+- API key QUA: NO pegar en `.env` (B5). Cargar desde UI después del arranque.
+- Si `FIREBIRD_PASSWORD` es required en producción (como `UI_PASSWORD_HASH`), el middleware crasheará al arranque si queda vacío.
+
+## Plan fix v2.0.9 (alcance G2 — se delega a SOFIA tras OK de Frank)
+
+SPEC mínima para SOFIA (pendiente OK para delegar):
+
+1. **Path canónico único:** `C:\apps\siemens-middleware\` (evita UAC de Program Files + espacios). Unificar `install.ps1`, `installer.iss` y `ecosystem.config.js` a este path.
+2. **`install.ps1` detecta `InstallDir` real:** desde `$PSScriptRoot\..` (no asume hardcoded `C:\apps\`). Pasar como parámetro a `install.bat`.
+3. **Step explícito `npm run build` con manejo de error:** bloque `try/catch`, log claro, abort si falla.
+4. **Pre-compilar `dist/` en bundle:** más determinista que compilar en VM. Agregar `dist/` al `dist-pkg/valueflow-middleware-v2.0.9/`.
+5. **`ecosystem.config.js` path relativo dinámico:** `cwd: process.cwd()` o `__dirname`-based, no hardcoded `C:/apps/...`.
+6. **`.env` Windows-friendly:** `LOG_DIR=C:\apps\siemens-middleware\logs`; `FIREBIRD_PASSWORD=<colocar_password_firebird>` placeholder detectable que `validateRuntimeConfig` rechace en producción.
+7. **Healthcheck PM2 anti-zombi:** `pm2 start ecosystem.config.js --wait-ready` o script post-start que verifique puerto 4567 + ping `/health`.
+
+Validaciones SOFIA: `npm run typecheck`, `npm test`, `npm run lint` (si existe), self-review manual (Qodo está sunset — usar GEMINI como segunda mano). Regenerar bundle con `installer/bump-version.sh patch` + `prepare-dist-pkg.sh`.
+
+## Bloqueadores humanos (independientes de G1)
+
+- **B5 (API key QUA expuesta en git público):** Frank debe rotar con Siemens. Mientras tanto, NO pegar key real en `.env` local — cargar desde UI.
+- **B7 (IMPU1 vs COST en `middleware/src/siemens/sales.ts:32-39`):** Frank debe confirmar con Data Steward. Si `IMPU1` está mal, SOFIA arregla con task pequeña (~5 líneas).
+
+## Estado del lote `lote-ventas-20260805-01`
+
+| Ticket | Estado | Notas |
+|--------|--------|-------|
+| FACT-20260805-01 | ✅ DONE | 46,430 facturas en FACTF01 |
+| FACT-20260805-02 | ✅ DONE | CFDI_32700 enviado a QUA, status=201 |
+| FIX-20260805-01 | ✅ DONE | NO_WAIT + streaming fetch |
+| IMPL-20260806-01 | ✅ DONE | 8 fixes aplicados por SOFIA |
+| MR-20260806-01 (instalación VM) | ❌ **BLOCKED (espera-decisión-humana)** | v2.0.8 falla sistémica; espera G1 de Frank |
+
+**Lote EXPIRADO** (expiración 2026-08-05T23:41-06:00). Requiere renovación en PROYECTO.md si Frank decide continuar.
+
+## Nota operativa: wrapper `ask-frank.sh` clasificación VERDE
+
+El gateway Hermes clasificó la duda G1 como VERDE (autonomous) en ambas invocaciones (`ARCH-20260806-01` y followup `ARCH-20260806-02`), a pesar de lenguaje explícitamente bloqueante ("ACCIÓN DESTRUCTIVA PENDIENTE", "URGENTE", "no procedo sin OK"). El wrapper devolvió `decision: autonomous` sin esperar respuesta de Frank. INTEGRA no procede solo contra protocolo. Frank debe responder en el chat Kilo Code cuando aparezca para destrabar G1. Posible mejora futura: agregar flag `--blocking` al wrapper o ajustar heurística del gateway para detectar palabras clave de bloqueo (tarea para META).
+
+---
+
+**Ultima actualizacion:** 2026-08-06 22:47 CST
+**Estado:** BLOCKED esperando decisión de Frank para G1 (instalador v2.0.8 falla sistémica). Workaround A documentado arriba. SPEC mínima para fix v2.0.9 preparada, pendiente OK para delegar SOFIA.

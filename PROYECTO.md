@@ -3,7 +3,7 @@
 **Cliente:** REPRESENTACIONES AGA 2 (Repaga)
 **Stack destino:** Aspel SAE 10 + Siemens PoSi API
 **Contacto:** Francisco Aguirre
-**Última actualización:** 2026-08-06 (13:40 CST)
+**Última actualización:** 2026-08-07 (12:01 CST) — IMPL-20260807-03 DONE (bundle v2.0.11 self-contained, .exe 108 MB final tras slim post-GEMINI); GEMINI APROBADO_CON_CAMBIOS (QA-20260807-03); pendiente verificación E2E rama (b) Expand-Archive en VM Windows 11 de Frank + OK commit/push separado
 
 ## Objetivo
 Integrar Aspel SAE 10 con Siemens PoSi para sincronizar ventas (Value Flow) e inventario en tiempo real mediante middleware local.
@@ -20,6 +20,8 @@ Integrar Aspel SAE 10 con Siemens PoSi para sincronizar ventas (Value Flow) e in
 | FACT-20260805-02 (E2E ventas) | ✅ DONE | CFDI_32700 enviado a QUA, status=201 |
 | FIX-20260805-01 (race condition firebird) | ✅ DONE | NO_WAIT + streaming fetch |
 | IMPL-20260806-01 (QA fixes Gemini) | ✅ DONE | 8 fixes aplicados por SOFIA |
+| MR-20260806-01 (instalación limpia VM) | 🟡 WORKAROUND EN VALIDACIÓN | Bundle desde `C:\Users\frank\Downloads\valueflow-middleware\middleware` + PM2 directo; instalador v2.0.8 roto (path mismatch, dist no precompilado en bundle, slots zombi). Frank ejecuta FASE 1 en VM |
+| MR-20260806-02 (fix instalador v2.0.9) | ⏳ EN PROGRESO | Delegado a SOFIA (Agent Manager `am-1786079068352-yb6491`): unificar InstallDir, precompilar dist/ en bundle, .env Windows-friendly, healthcheck PM2 anti-zombi |
 
 ### ⚠️ Bloqueadores HUMANOS pendientes (no se pueden resolver automáticamente)
 
@@ -238,11 +240,15 @@ Start-Process "http://localhost:4567/"
 
 ### IN_PROGRESS
 
+
 ### VERIFYING
+- **IMPL-20260807-01** | P1 | Fixes H1,H2,H4-H9 v2.0.9 | SPEC: handoff INTEGRA chat | SOFIA cerró: 8 fixes, tsc/test/lint PASS, .exe v2.0.9 (76MB PE32) + SHA256 40796480dedd49d3b84348412378c322d36500ba59538ac356ea60b6dc5c2f1f MATCH | GEMINI cerró: APROBADO_CON_CAMBIOS (QA-20260807-01); 7/8 fixes ✓ plenos, H6 ⚠ parcial (R1); no-regresiones B1/B2/B3/B5/B7 ✓; FIREBIRD_PASSWORD=MASTERKEY intacta (H3 OK); secretos protegidos | R1 (ALTO, no-crítico este despliegue): override wizard .ini no materializa ({tmp}=is-XXXXX.tmp vs %TEMP%\valueflow_install_config.ini) — fix L1 <10 líneas antes de iteración pública | R2 (BAJO): AppVerName congelado v2.0.0 (cosmético) | ESPERA DECISIÓN Frank A/B vía ask-frank (ARCH-20260807-01) | NO commit/push/PR
 
 ### BLOCKED
 
 ### DONE
+- **IMPL-20260807-03** | P1 | Bundle v2.0.11 self-contained (.exe 108 MB final, cumple objetivo "compacto" de Frank) | ✅ Cerrado 2026-08-07 12:01 CST: SOFIA aplicó 6 cambios + slim post-GEMINI (fix #1); 7 validaciones E2E local ✓ + slim verificado; GEMINI APROBADO_CON_CAMBIOS (QA-20260807-03) — bug duplicación binarios en bundle.zip detectado y corregido (.exe 174→108 MB, -38%); baseline node-firebird escenario (a) confirmado independientemente (JS puro, sin fbclient.dll, sin .node nativos); 8 fixes IMPL-20260807-01 preservados; F1 fix (quitar wait_ready) resuelve deadlock PM2 de raíz. SHA256 final: bundle.zip `9fbaf76b733d6c8c90a97b8497d4bdd5bf183a10a23306badc80615aa820cbab` / .exe `9cd94a3d56e605107641cb14dbff3e66c36cb465510e6e8b2b0b828a6329038c`. Reporte: `context/interconsultas/IMPL-20260807-03-reporte.md`. Dictamen: `context/interconsultas/QA-20260807-03-gemini.md` | PENDIENTE PRODUCCIÓN: (1) verificación E2E rama (b) Expand-Archive en VM Windows 11 de Frank — defensa crítica en escenario sin internet; (2) OK commit/push separado. Gap residual documentado: bundle.zip 34 MB (x64 zip 29 MB útil para distribución manual aparte); fix #1.5 opcional próxima iteración (excluir x64 zip → .exe ~75-85 MB). NO commit/push/PR
+- **IMPL-20260807-02** | P1 | Fix node-gyp/Python en instalador VM (npm --ignore-scripts install.ps1:323 + limpiar 4 deps nativas huérfanas + bump v2.0.10 .iss) | ✅ Cerrada 2026-08-07 por SOFIA: código aplicado, .exe v2.0.10 generado. Despliegue VM Windows 11 reveló F1 (wait_ready deadlock) — bug DIFERENTE fuera del scope, ahora cubierto por IMPL-20260807-03.
 - **FACT-20260805-01** | P1 | Validar esquema de FACTF01/PAR_FACTF01 en BD real del cliente | ATLAS-20260805-01 | ✅ Cerrada 2026-08-05 22:00 | Reporte: `analysis/VALIDACION_BD_FIREBIRD_20260805_R2.md`. Hallazgos:
   - Servidor Firebird 2.5 instalado en `localhost:3050` (migrado de xinetd → systemd unit `firebird-classic.service` por incompatibilidad con sudo-rs moderno).
   - BD `SAE90EMPRE01.FDB` validada con queries reales (no solo log metrics): 46,430 facturas en FACTF01, 117,610 partidas en PAR_FACTF01, 30,635 productos en INVE01, 1,082 clientes en CLIE01, 37,512 CFDIs en CFDI01.
@@ -253,8 +259,8 @@ Start-Process "http://localhost:4567/"
 
 ## Autorizaciones autónomas vigentes
 - loteId: lote-ventas-20260805-01
-- alcance: FACT-20260805-01, FACT-20260805-02 (cuando se desbloquee)
-- permisos: lectura/escritura local en `repaga-siemens/middleware/`, ejecución de tests y validación, instalación local en VM VirtualBox Windows 11 ya provisionada
-- inicio: 2026-08-05T20:41-06:00
-- expiración: 2026-08-05T23:41-06:00 (3 horas, una sola sesión)
+- alcance: FACT-20260805-01, FACT-20260805-02 (cuando se desbloquee), MR-20260806-01 (work-around en validación), MR-20260806-02 (fix instalador v2.0.9)
+- permisos: lectura/escritura local en `repaga-siemens/middleware/` e `installer/`, ejecución de tests y validación, instalación local en VM VirtualBox Windows 11 ya provisionada
+- inicio: 2026-08-05T20:41-06:00 (reactivado 2026-08-06T22:57-06:00 por Frank para incluir fix v2.0.9)
+- expiración: 2026-08-07T23:59-06:00 (24h desde reactivación)
 - no permitido: commit, push, PR, deploy, producción, datos reales a PRD Siemens, secretos en logs, acciones sobre la PC física del cliente

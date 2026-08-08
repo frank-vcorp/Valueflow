@@ -1,21 +1,24 @@
 ﻿; ============================================
 ; Valueflow Middleware - Inno Setup Script
-; v2.0.0 - Instalador robusto con MSI oficiales
+; v2.0.17 - Cron editable amigable + campos opcionales segun spec Siemens
 ; Compilable con ISCC.exe v6.x o v7.x
-; Output: build_output\Valueflow-Setup-v2.0.0.exe
+; Output: build_output\Valueflow-Setup-v2.0.17.exe
+; ID de intervencion: IMPL-20260807-09 (FIX-20260807-19 a FIX-20260807-21 sincronizado)
 ; ============================================
 
 #define MyAppName "Valueflow Middleware"
-#define MyAppVersion "2.0.8"
+#define MyAppVersion "2.0.17"
 #define MyAppPublisher "VCorp - Representaciones Aga de Saltillo"
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-AppVerName={#MyAppName} v2.0.0 (build 2026-08-06)
+AppVerName={#MyAppName} v2.0.17 (build 2026-08-07)
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\siemens-middleware
+; B6: Path unificado a C:\apps\siemens-middleware (evita UAC + espacios de Program Files).
+; install.ps1, uninstall.bat y ecosystem.config.js ya apuntan a este path.
+DefaultDirName=C:\apps\siemens-middleware
 DefaultGroupName={#MyAppName}
 Compression=lzma
 SolidCompression=yes
@@ -27,7 +30,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=Valueflow Middleware Installer
-OutputBaseFilename=Valueflow-Setup-v2.0.8
+OutputBaseFilename=Valueflow-Setup-v2.0.17
 OutputDir=build_output
 
 [Languages]
@@ -38,8 +41,17 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Crear acceso directo en el escritorio"; GroupDescription: "Accesos directos:"
 
 [Files]
-; Middleware completo (sin node_modules compilado, sin dist para Linux)
-Source: "..\middleware\*"; DestDir: "{app}\middleware"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "node_modules\.bin,coverage,.nyc_output,*.log,dist\**\*.map"
+; IMPL-20260807-03 Opcion B-1: .exe compacto + bundle.zip como asset.
+; El .exe NO empaqueta node_modules del working tree (..\middleware\); el
+; staging node_modules (preparado por prepare-dist-pkg.sh) se distribuye
+; via el bundle.zip que install.ps1 detecta y expande como fallback.
+; H2: Excluir .env del .exe para no filtrar SIEMENS_API_KEY real del working tree.
+Source: "..\middleware\*"; DestDir: "{app}\middleware"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "node_modules\*,.env,.env.*,coverage,.nyc_output,*.log,dist\**\*.map"
+
+; Bundle self-contained con node_modules pre-instalado portable (Opcion B-1).
+; install.ps1 (PASO 7) busca este zip en {app}\installer\assets y lo expande
+; si no encuentra node_modules\node-firebird\package.json directo en destino.
+Source: "..\dist-pkg\valueflow-middleware-v2.0.17.zip"; DestDir: "{app}\installer\assets"; Flags: ignoreversion
 
 ; Scripts del instalador
 Source: "install.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion

@@ -1,0 +1,69 @@
+﻿{
+    "retry_policy":  {
+                         "initial_delay_ms":  2000,
+                         "backoff_multiplier":  2,
+                         "max_retries":  5,
+                         "max_delay_ms":  60000
+                     },
+    "siemens":  {
+                    "base_url":  "https://api.pos.siemens.com",
+                    "environment":  "qua",
+                    "api_key":  "env:SIEMENS_API_KEY",
+                    "distributor_sender_id":  "MX-REPRESENTACIONES"
+                },
+    "firebird":  {
+                     "db_path":  "C:\\Users\\frank\\Desktop\\REPAGA\\SAE90EMPRE01.FDB",
+                     "user":  "SYSDBA",
+                     "password_source":  "env:FIREBIRD_PASSWORD"
+                 },
+    "siemens_line_filter":  {
+                                "lines":  [
+                                              "BAJA",
+                                              "SINU",
+                                              "SIMAT",
+                                              "LP",
+                                              "DRIVE",
+                                              "MOTOR",
+                                              "SINUM",
+                                              "SERVI",
+                                              "OBSO",
+                                              "SENSO",
+                                              "SERVO",
+                                              "INSTR",
+                                              "UPS",
+                                              "SIMA",
+                                              "ESPE"
+                                          ],
+                                "include_inactive_products":  true,
+                                "enabled":  true
+                            },
+    "batch_size":  3000,
+    "optional_fields":  {
+                            "inventory":  {
+                                              "abc_segmentation":  false,
+                                              "stock_item":  false,
+                                              "upc_ean":  false,
+                                              "vendor_item_options":  false,
+                                              "distributor_order_taking_branch_name":  false,
+                                              "distributor_order_taking_branch_id":  true
+                                          },
+                            "sales":  {
+                                          "discount_amount":  false,
+                                          "tax_amount":  false,
+                                          "customer_name":  false,
+                                          "product_description":  false
+                                      }
+                        },
+    "schedules":  {
+                      "inventory":  {
+                                        "cron":  "0 2 * * *",
+                                        "timezone":  "America/Mexico_City",
+                                        "enabled":  true
+                                    },
+                      "sales":  {
+                                    "cron":  "0 3 * * *",
+                                    "timezone":  "America/Mexico_City",
+                                    "enabled":  true
+                                }
+                  }
+}

@@ -96,7 +96,7 @@ function createServer(): express.Express {
     const files = fs.readdirSync(env.logDir).filter((file) => file.endsWith('.log') || file.endsWith('.gz')).map((file) => `<li>${escapeHtml(file)}</li>`).join('');
     res.send(render('logs', { files: files || '<li>Sin archivos de log todavía.</li>' }));
   });
-  app.get('/diagnostics', (_req, res) => res.send(render('diagnostics', { diagnostics: `<p>Node.js: ${escapeHtml(process.version)}</p><p>Driver: node-firebird-native-api mediante node-firebird-driver-native</p><p>BD configurada: ${escapeHtml(readRuntimeConfig().firebird.db_path)}</p><p>API Key: ${escapeHtml(maskApiKey(env.siemensApiKey || readRuntimeConfig().siemens.api_key))}</p><p>Config: ${escapeHtml(getConfigPath())}</p>` })));
+  app.get('/diagnostics', (_req, res) => res.send(render('diagnostics', { diagnostics: `<p>Node.js: ${escapeHtml(process.version)}</p><p>Driver: node-firebird (JS puro, sin compilacion nativa)</p><p>BD configurada: ${escapeHtml(readRuntimeConfig().firebird.db_path)}</p><p>API Key: ${escapeHtml(maskApiKey(env.siemensApiKey || readRuntimeConfig().siemens.api_key))}</p><p>Config: ${escapeHtml(getConfigPath())}</p>` })));
 
   app.get('/api/config', (_req, res) => { const config = readRuntimeConfig(); res.json({ ...config, siemens: { ...config.siemens, api_key: maskApiKey(env.siemensApiKey || config.siemens.api_key) } }); });
   app.post('/api/config', (req, res) => {
